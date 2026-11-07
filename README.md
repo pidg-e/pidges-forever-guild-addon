@@ -59,6 +59,11 @@ Control dropdown (or type `/pfg settings`). Enter the Discord invite (a
 `discord.gg` link or just the code) and the Warcraft Logs guild page, then
 **Save**. Leave a box empty to remove that button.
 
+WoW only lets its own Guild Information window change the guild's Info text,
+so there is one more step: open the guild's **Info** tab, click **Edit** next
+to Guild Information, and click **Accept**. The addon has already filled your
+links in.
+
 The links are saved as two lines at the end of the guild's Info text:
 
 ```

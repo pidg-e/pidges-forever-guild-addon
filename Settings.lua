@@ -10,8 +10,12 @@
 -- Every member's client already receives that text, whether or not the Guild
 -- Master is online, and only ranks allowed to edit it can change it, so
 -- nobody can spoof the links. Members without the addon still see readable
--- links in the Info box. When the Guild Master saves, a guild addon message
--- tells everyone online to fetch the new text right away.
+-- links in the Info box.
+--
+-- WoW only lets its own Guild Information editor change the Info text, so
+-- Save fills the links into that editor and the Guild Master clicks Accept.
+-- Once the new text comes back, a guild addon message tells everyone online
+-- to fetch it right away.
 
 local ADDON, ns = ...
 local D = ns.D
@@ -144,27 +148,19 @@ local function getInfoText()
 	end
 end
 
-local function setInfoText(text)
-	if C_GuildInfo and C_GuildInfo.SetInfoText then
-		C_GuildInfo.SetInfoText(text)
-		return true
-	end
-	if SetGuildInfoText then
-		SetGuildInfoText(text)
-		return true
-	end
-	return false
-end
-
 local function rosterLoaded()
 	return (GetNumGuildMembers and GetNumGuildMembers() or 0) > 0
 end
 
--- Links the Guild Master just saved, until the server sends back an Info
--- text that has them. Until then (or until it gives up), an older copy of
--- the text arriving in the meantime doesn't undo the save.
-local pending
-local PENDING_SECONDS = 30
+-- Links the Guild Master saved that aren't in the Info text yet. WoW only
+-- lets its own Guild Information editor change that text (an addon calling
+-- SetInfoText is blocked), so Save keeps them here and fills them into that
+-- editor when it opens; the Guild Master then clicks Accept.
+local pendingEdit
+
+function D.PendingLinks()
+	return pendingEdit
+end
 
 local function setLinks(links)
 	local data = D.Data()
@@ -198,18 +194,13 @@ function D.ReadGuildLinks()
 		return
 	end
 	local links = D.ParseLinks(text)
-	if pending then
-		if links.discord == pending.discord and links.logs == pending.logs then
-			pending = nil
-		elseif D.Now() < pending.expires then
-			return
-		else
-			pending = nil
-			D.print("the server didn't keep the new links in the guild Info text. Please try saving again.")
-			D.Fire("LINKS_FAILED")
-		end
-	end
 	setLinks(links)
+	if pendingEdit and links.discord == pendingEdit.discord and links.logs == pendingEdit.logs then
+		pendingEdit = nil
+		D.Send("L")
+		D.print("your guild's links are saved. Guildmates with the addon will see the new buttons.")
+		D.Fire("LINKS_SAVED")
+	end
 end
 
 local watcher = CreateFrame("Frame")
@@ -236,7 +227,9 @@ D.Handle("L", function()
 	end
 end)
 
--- Save new links (Guild Master only). Returns true, or false and why not.
+-- Save new links (Guild Master only). Returns true and "saved" when the Info
+-- text already has them, true and "edit" when they wait for the Guild
+-- Information editor, or false and why not.
 function D.SaveLinks(discordText, logsText)
 	if not D.InGuild() or not IsGuildLeader() then
 		return false, "Only the Guild Master can change these."
@@ -259,21 +252,66 @@ function D.SaveLinks(discordText, logsText)
 	if #new > MAX_INFO then
 		return false, ("The guild's Info text is too long to add these (%d of %d characters). Shorten it under Guild Information first."):format(#new, MAX_INFO)
 	end
-	local links = { discord = discord ~= "" and discord or nil, logs = logs ~= "" and logs or nil }
-	if new ~= old then
-		if not setInfoText(new) then
-			return false, "This game client has no way for addons to change the guild Info text."
-		end
-		pending = { discord = links.discord, logs = links.logs, expires = D.Now() + PENDING_SECONDS }
-		if C_Timer then
-			C_Timer.After(2, requestRoster)
-			C_Timer.After(PENDING_SECONDS + 1, D.ReadGuildLinks)
-		end
+	if new == old then
+		pendingEdit = nil
+		return true, "saved"
 	end
-	setLinks(links)
-	D.Send("L")
-	return true
+	pendingEdit = { discord = discord ~= "" and discord or nil, logs = logs ~= "" and logs or nil }
+	D.print("almost done: open the guild's Info tab, click Edit next to Guild Information, then Accept. Your links are filled in for you.")
+	return true, "edit"
 end
+
+-- Blizzard's Guild Information editor: when the Guild Master opens it with
+-- links waiting, put them in. Only the edit box's text is touched, so
+-- Blizzard's Accept button still saves it as normal.
+local editorHint
+
+local function editorBox()
+	local f = CommunitiesGuildTextEditFrame
+	local c = f and f.Container
+	local sf = c and c.ScrollFrame
+	return sf and sf.EditBox
+end
+
+local function onEditorOpened(frame, editType)
+	if editorHint then
+		editorHint:Hide()
+	end
+	local box = editorBox()
+	if editType ~= "info" or not pendingEdit or not box or not IsGuildLeader() then
+		return
+	end
+	box:SetText(D.BuildInfoText(box:GetText() or "", pendingEdit.discord or "", pendingEdit.logs or ""))
+	box:SetCursorPosition(0)
+	if not editorHint then
+		editorHint = CreateFrame("Frame", "PFGInfoEditHint", frame, "BackdropTemplate")
+		editorHint:SetSize(300, 40)
+		editorHint:SetPoint("BOTTOM", frame, "TOP", 0, -4)
+		if editorHint.SetBackdrop then
+			editorHint:SetBackdrop({
+				bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+				edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+				edgeSize = 12,
+				insets = { left = 3, right = 3, top = 3, bottom = 3 },
+			})
+			editorHint:SetBackdropColor(0, 0, 0, 0.9)
+		end
+		local text = editorHint:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		text:SetPoint("CENTER")
+		text:SetWidth(280)
+		text:SetText(D.COLOR .. "Pidge's Forever|r added your links at the end. Click Accept to save them.")
+		frame:HookScript("OnHide", function()
+			editorHint:Hide()
+		end)
+	end
+	editorHint:Show()
+end
+
+D.OnGuildPanel(function()
+	if CommunitiesGuildTextEditFrame_SetType then
+		hooksecurefunc("CommunitiesGuildTextEditFrame_SetType", onEditorOpened)
+	end
+end)
 
 -- Guild Control > Pidge's Forever Settings ---------------------------------------
 -- An extra entry in the Guild Control dropdown, for the Guild Master only.
@@ -338,7 +376,7 @@ local function createPanel()
 	where:SetPoint("TOPLEFT", p.logs.note, "BOTTOMLEFT", 0, -16)
 	where:SetWidth(290)
 	where:SetJustifyH("LEFT")
-	where:SetText("Saved as two lines at the end of the guild's Info text, so members without the addon can read them too.")
+	where:SetText("Saved as two lines at the end of the guild's Info text, so members without the addon can read them too. After Save, confirm with Accept in WoW's Guild Information window.")
 
 	p.status = p:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	p.status:SetPoint("TOPLEFT", where, "BOTTOMLEFT", 0, -12)
@@ -352,7 +390,7 @@ local function createPanel()
 	p.save = save
 
 	local function fill()
-		local links = D.Links()
+		local links = pendingEdit or D.Links()
 		p.discord:SetText(links.discord or "")
 		p.logs:SetText(links.logs or "")
 		p.discord:SetCursorPosition(0)
@@ -363,14 +401,18 @@ local function createPanel()
 	local function doSave()
 		p.discord:ClearFocus()
 		p.logs:ClearFocus()
-		local ok, err = D.SaveLinks(p.discord:GetText(), p.logs:GetText())
-		if ok then
+		local ok, how = D.SaveLinks(p.discord:GetText(), p.logs:GetText())
+		if ok and how == "edit" then
+			fill()
+			p.status:SetTextColor(1, 0.82, 0)
+			p.status:SetText("Almost done. WoW only lets its own window change the Info text: open the guild's Info tab, click Edit next to Guild Information, then Accept. Your links are already filled in.")
+		elseif ok then
 			fill()
 			p.status:SetTextColor(0.3, 1, 0.3)
-			p.status:SetText("Saved. Guildmates with the addon will see the new buttons.")
+			p.status:SetText("Saved. Guildmates with the addon will see these buttons.")
 		else
 			p.status:SetTextColor(1, 0.3, 0.3)
-			p.status:SetText(err)
+			p.status:SetText(how)
 		end
 	end
 	save:SetScript("OnClick", doSave)
@@ -441,10 +483,10 @@ if Menu and Menu.ModifyMenu then
 	end)
 end
 
-D.On("LINKS_FAILED", function()
+D.On("LINKS_SAVED", function()
 	if panel and panel:IsShown() then
-		panel.status:SetTextColor(1, 0.3, 0.3)
-		panel.status:SetText("The server didn't keep the change. Please try again.")
+		panel.status:SetTextColor(0.3, 1, 0.3)
+		panel.status:SetText("Saved. Guildmates with the addon will see these buttons.")
 	end
 end)
 
