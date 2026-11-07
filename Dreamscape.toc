@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: |cff9b7bffDreamscape|r
+## Notes: Guild tools for <Dreamscape>: crafting orders, members' professions, and Discord, Warcraft Logs and GitHub links.
+## Author: Pidge
+## Version: 0.6.0
+## SavedVariables: DreamscapeDB
+## IconTexture: Interface\AddOns\Dreamscape\media\discord
+
+Core.lua
+Links.lua
+Professions.lua
+Orders.lua
+Items.lua
+OrdersUI.lua
+CraftButton.lua
