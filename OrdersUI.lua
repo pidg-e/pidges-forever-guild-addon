@@ -79,7 +79,10 @@ local function visible(o)
 	return o.status == S.DONE or o.status == S.CANCELLED
 end
 
+-- Whisper by name only: everyone in the guild is on the same server, and
+-- "Name-Realm" in the chat box looks wrong there.
 local function whisper(name)
+	name = D.Short(name)
 	if ChatFrameUtil and ChatFrameUtil.SendTell then
 		ChatFrameUtil.SendTell(name)
 	elseif ChatFrame_SendTell then
