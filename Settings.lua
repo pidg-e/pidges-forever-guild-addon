@@ -2,31 +2,26 @@
 -- page), set by the Guild Master under Guild Control > Pidge's Forever
 -- Settings.
 --
--- The links are kept in the guild's Info text, one line each:
+-- WoW doesn't let addons change the guild's Info text (not even by filling
+-- in Blizzard's own editor), so the links travel as guild addon messages:
 --
---   Discord: discord.gg/abc123
---   Warcraft Logs: forever.warcraftlogs.com/guild/id/12345
---
--- Every member's client already receives that text, whether or not the Guild
--- Master is online, and only ranks allowed to edit it can change it, so
--- nobody can spoof the links. Members without the addon still see readable
--- links in the Info box.
---
--- WoW only lets its own Guild Information editor change the Info text, so
--- Save fills the links into that editor and the Guild Master clicks Accept.
--- Once the new text comes back, a guild addon message tells everyone online
--- to fetch it right away.
+-- * The Guild Master's addon sends them on Save, when they log in, and when
+--   anyone asks ("LQ").
+-- * Everyone keeps a copy in their saved data, so the buttons show straight
+--   after login, and answers "LQ" too, so members who log in while the Guild
+--   Master is offline still get them.
+-- * Links straight from the Guild Master always win. A copy passed on by
+--   someone else is only taken while we have nothing from the Guild Master
+--   yet, so a member can't overrule the Guild Master.
 
 local ADDON, ns = ...
 local D = ns.D
-
-local MAX_INFO = 500 -- the server keeps at most this many characters of Info text
 
 local function trim(s)
 	return ((s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
--- Links: parsing and writing ------------------------------------------------------
+-- Checking links ------------------------------------------------------------------
 
 -- What the Guild Master typed -> "https://discord.gg/code", "" for nothing,
 -- or nil if it isn't an invite. A bare code is accepted.
@@ -56,121 +51,55 @@ function D.NormalizeLogs(text)
 	return host and ("https://" .. host .. path) or nil
 end
 
--- Our lines in the Info text. Only lines that hold a real link count, so a
--- line like "Discord: ask an officer" is left alone.
-local function parseLine(line)
-	local d = line:match("^%s*[Dd][Ii][Ss][Cc][Oo][Rr][Dd]%s*:%s*(%S+)%s*$")
-	if d and d:find("discord", 1, true) then
-		local url = D.NormalizeDiscord(d)
-		if url and url ~= "" then
-			return "discord", url
-		end
-	end
-	local l = line:match("^%s*[Ww]arcraft%s*[Ll]ogs%s*:%s*(%S+)%s*$")
-	if l and l:find("warcraftlogs", 1, true) then
-		local url = D.NormalizeLogs(l)
-		if url and url ~= "" then
-			return "logs", url
-		end
-	end
-end
-
-local function lines(text)
-	local out = {}
-	for line in ((text or ""):gsub("\r\n?", "\n") .. "\n"):gmatch("(.-)\n") do
-		out[#out + 1] = line
-	end
-	return out
-end
-
--- Guild Info text -> { discord = url, logs = url } (either may be missing).
-function D.ParseLinks(text)
-	local links = {}
-	for _, line in ipairs(lines(text)) do
-		local kind, url = parseLine(line)
-		if kind and not links[kind] then
-			links[kind] = url
-		end
-	end
-	return links
-end
-
-local function bare(url)
-	return (url:gsub("^https://", ""))
-end
-
--- The Info text with our lines replaced by these links ("" drops one).
-function D.BuildInfoText(old, discord, logs)
-	local keep = {}
-	for _, line in ipairs(lines(old)) do
-		if not parseLine(line) then
-			keep[#keep + 1] = line
-		end
-	end
-	while #keep > 0 and keep[#keep]:match("^%s*$") do
-		keep[#keep] = nil
-	end
-	local add = {}
-	if discord and discord ~= "" then
-		add[#add + 1] = "Discord: " .. bare(discord)
-	end
-	if logs and logs ~= "" then
-		add[#add + 1] = "Warcraft Logs: " .. bare(logs)
-	end
-	if #add > 0 then
-		if #keep > 0 then
-			keep[#keep + 1] = ""
-		end
-		for _, line in ipairs(add) do
-			keep[#keep + 1] = line
-		end
-	end
-	return table.concat(keep, "\n")
-end
-
 -- The current guild's links ---------------------------------------------------------
--- Kept in saved data too, so the buttons are right straight after login,
--- before the Info text arrives.
+-- data.links = { discord = url?, logs = url?, t = time set, gm = true if it
+-- came from the Guild Master }
 
 function D.Links()
 	local data = D.Data()
 	return data and data.links or {}
 end
 
--- The guild Info text. Modern clients only have C_GuildInfo.GetInfoText and
--- SetInfoText; older ones have the global functions.
-local function getInfoText()
-	if C_GuildInfo and C_GuildInfo.GetInfoText then
-		return C_GuildInfo.GetInfoText() or ""
-	end
-	if GetGuildInfoText then
-		return GetGuildInfoText() or ""
-	end
-end
-
-local function rosterLoaded()
-	return (GetNumGuildMembers and GetNumGuildMembers() or 0) > 0
-end
-
--- Links the Guild Master saved that aren't in the Info text yet. WoW only
--- lets its own Guild Information editor change that text (an addon calling
--- SetInfoText is blocked), so Save keeps them here and fills them into that
--- editor when it opens; the Guild Master then clicks Accept.
-local pendingEdit
-
-function D.PendingLinks()
-	return pendingEdit
-end
-
-local function setLinks(links)
+local function store(links)
 	local data = D.Data()
 	if not data then
 		return
 	end
 	local old = data.links or {}
+	data.links = links
 	if old.discord ~= links.discord or old.logs ~= links.logs then
-		data.links = { discord = links.discord, logs = links.logs }
 		D.Fire("LINKS")
+	end
+end
+
+local function opt(s)
+	return s ~= "" and s or nil
+end
+
+-- Is this sender ("Name-Realm") the Guild Master? Read from the roster
+-- (rank 0); names are compared without realm and case.
+local function plain(name)
+	return (D.Short(name or "")):lower()
+end
+
+function D.IsGuildMaster(sender)
+	if not GetNumGuildMembers or not GetGuildRosterInfo then
+		return false
+	end
+	local want = plain(sender)
+	for i = 1, (GetNumGuildMembers()) or 0 do
+		local name, _, rankIndex = GetGuildRosterInfo(i)
+		if rankIndex == 0 then
+			return plain(name) == want
+		end
+	end
+	return false
+end
+
+local function sendLinks()
+	local l = D.Links()
+	if l.t then
+		D.Send("LS", l.t, l.discord or "", l.logs or "", l.gm and "1" or "0")
 	end
 end
 
@@ -182,54 +111,70 @@ local function requestRoster()
 	end
 end
 
--- Read the links from the Info text, once it has arrived. The text comes with
--- the roster, so an empty text before the roster is loaded means "not here
--- yet", not "no links".
-function D.ReadGuildLinks()
-	if not D.InGuild() then
+-- "LS" t discord logs fromGM: the guild's links.
+local answered = false
+D.Handle("LS", function(f, sender)
+	answered = true
+	local t = tonumber(f[2])
+	if not t then
 		return
 	end
-	local text = getInfoText()
-	if not text or (text == "" and not rosterLoaded()) then
-		return
+	local discord, logs = opt(D.NormalizeDiscord(f[3] or "") or ""), opt(D.NormalizeLogs(f[4] or "") or "")
+	local have = D.Links()
+	if D.IsGuildMaster(sender) then
+		if not have.gm or have.t ~= t or have.discord ~= discord or have.logs ~= logs then
+			store({ discord = discord, logs = logs, t = t, gm = true })
+		end
+	elseif not have.gm and (not have.t or t > have.t) then
+		-- Passed on by a guildmate: good enough until the Guild Master says otherwise.
+		store({ discord = discord, logs = logs, t = t, gm = false })
 	end
-	local links = D.ParseLinks(text)
-	setLinks(links)
-	if pendingEdit and links.discord == pendingEdit.discord and links.logs == pendingEdit.logs then
-		pendingEdit = nil
-		D.Send("L")
-		D.print("your guild's links are saved. Guildmates with the addon will see the new buttons.")
-		D.Fire("LINKS_SAVED")
-	end
-end
+end)
 
-local watcher = CreateFrame("Frame")
-D.RegisterEvents(watcher, "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE")
-watcher:SetScript("OnEvent", function()
-	D.ReadGuildLinks()
+-- "LQ": someone wants the links. The Guild Master answers at once; others
+-- wait a moment and stay quiet if someone else answered first.
+D.Handle("LQ", function()
+	if not D.Links().t then
+		return
+	end
+	if IsGuildLeader() then
+		sendLinks()
+	elseif C_Timer then
+		answered = false
+		C_Timer.After(2 + math.random() * 4, function()
+			if not answered then
+				sendLinks()
+			end
+		end)
+	end
 end)
 
 D.On("GUILD", function(member)
-	if member then
-		D.ReadGuildLinks()
-		requestRoster()
-	else
+	if not member then
 		D.Fire("LINKS")
+		return
 	end
-end)
-
--- "L": the Guild Master changed the links; fetch the new Info text.
-D.Handle("L", function()
+	requestRoster()
 	if C_Timer then
-		C_Timer.After(2, requestRoster)
-	else
-		requestRoster()
+		C_Timer.After(10, function()
+			if not D.InGuild() then
+				return
+			end
+			if IsGuildLeader() then
+				local l = D.Links()
+				if l.t and not l.gm then
+					-- We're the Guild Master now: what we have is ours to stand by.
+					l.gm = true
+				end
+				sendLinks()
+			else
+				D.Send("LQ")
+			end
+		end)
 	end
 end)
 
--- Save new links (Guild Master only). Returns true and "saved" when the Info
--- text already has them, true and "edit" when they wait for the Guild
--- Information editor, or false and why not.
+-- Save new links (Guild Master only). Returns true, or false and why not.
 function D.SaveLinks(discordText, logsText)
 	if not D.InGuild() or not IsGuildLeader() then
 		return false, "Only the Guild Master can change these."
@@ -242,76 +187,10 @@ function D.SaveLinks(discordText, logsText)
 	if not logs then
 		return false, "That doesn't look like a Warcraft Logs guild page (warcraftlogs.com/guild/...)."
 	end
-	local old = getInfoText()
-	-- Never write over an Info text we haven't seen yet.
-	if not old or (old == "" and not rosterLoaded()) then
-		requestRoster()
-		return false, "The guild's Info text hasn't loaded yet. Try again in a few seconds."
-	end
-	local new = D.BuildInfoText(old, discord, logs)
-	if #new > MAX_INFO then
-		return false, ("The guild's Info text is too long to add these (%d of %d characters). Shorten it under Guild Information first."):format(#new, MAX_INFO)
-	end
-	if new == old then
-		pendingEdit = nil
-		return true, "saved"
-	end
-	pendingEdit = { discord = discord ~= "" and discord or nil, logs = logs ~= "" and logs or nil }
-	D.print("almost done: open the guild's Info tab, click Edit next to Guild Information, then Accept. Your links are filled in for you.")
-	return true, "edit"
+	store({ discord = opt(discord), logs = opt(logs), t = D.Now(), gm = true })
+	sendLinks()
+	return true
 end
-
--- Blizzard's Guild Information editor: when the Guild Master opens it with
--- links waiting, put them in. Only the edit box's text is touched, so
--- Blizzard's Accept button still saves it as normal.
-local editorHint
-
-local function editorBox()
-	local f = CommunitiesGuildTextEditFrame
-	local c = f and f.Container
-	local sf = c and c.ScrollFrame
-	return sf and sf.EditBox
-end
-
-local function onEditorOpened(frame, editType)
-	if editorHint then
-		editorHint:Hide()
-	end
-	local box = editorBox()
-	if editType ~= "info" or not pendingEdit or not box or not IsGuildLeader() then
-		return
-	end
-	box:SetText(D.BuildInfoText(box:GetText() or "", pendingEdit.discord or "", pendingEdit.logs or ""))
-	box:SetCursorPosition(0)
-	if not editorHint then
-		editorHint = CreateFrame("Frame", "PFGInfoEditHint", frame, "BackdropTemplate")
-		editorHint:SetSize(300, 40)
-		editorHint:SetPoint("BOTTOM", frame, "TOP", 0, -4)
-		if editorHint.SetBackdrop then
-			editorHint:SetBackdrop({
-				bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-				edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-				edgeSize = 12,
-				insets = { left = 3, right = 3, top = 3, bottom = 3 },
-			})
-			editorHint:SetBackdropColor(0, 0, 0, 0.9)
-		end
-		local text = editorHint:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		text:SetPoint("CENTER")
-		text:SetWidth(280)
-		text:SetText(D.COLOR .. "Pidge's Forever|r added your links at the end. Click Accept to save them.")
-		frame:HookScript("OnHide", function()
-			editorHint:Hide()
-		end)
-	end
-	editorHint:Show()
-end
-
-D.OnGuildPanel(function()
-	if CommunitiesGuildTextEditFrame_SetType then
-		hooksecurefunc("CommunitiesGuildTextEditFrame_SetType", onEditorOpened)
-	end
-end)
 
 -- Guild Control > Pidge's Forever Settings ---------------------------------------
 -- An extra entry in the Guild Control dropdown, for the Guild Master only.
@@ -376,7 +255,7 @@ local function createPanel()
 	where:SetPoint("TOPLEFT", p.logs.note, "BOTTOMLEFT", 0, -16)
 	where:SetWidth(290)
 	where:SetJustifyH("LEFT")
-	where:SetText("Saved as two lines at the end of the guild's Info text, so members without the addon can read them too. After Save, confirm with Accept in WoW's Guild Information window.")
+	where:SetText("Sent to guildmates with the addon when you save, and again whenever you log in. Members who were offline get them from you or from any guildmate who has them.")
 
 	p.status = p:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	p.status:SetPoint("TOPLEFT", where, "BOTTOMLEFT", 0, -12)
@@ -390,7 +269,7 @@ local function createPanel()
 	p.save = save
 
 	local function fill()
-		local links = pendingEdit or D.Links()
+		local links = D.Links()
 		p.discord:SetText(links.discord or "")
 		p.logs:SetText(links.logs or "")
 		p.discord:SetCursorPosition(0)
@@ -401,18 +280,14 @@ local function createPanel()
 	local function doSave()
 		p.discord:ClearFocus()
 		p.logs:ClearFocus()
-		local ok, how = D.SaveLinks(p.discord:GetText(), p.logs:GetText())
-		if ok and how == "edit" then
-			fill()
-			p.status:SetTextColor(1, 0.82, 0)
-			p.status:SetText("Almost done. WoW only lets its own window change the Info text: open the guild's Info tab, click Edit next to Guild Information, then Accept. Your links are already filled in.")
-		elseif ok then
+		local ok, err = D.SaveLinks(p.discord:GetText(), p.logs:GetText())
+		if ok then
 			fill()
 			p.status:SetTextColor(0.3, 1, 0.3)
 			p.status:SetText("Saved. Guildmates with the addon will see these buttons.")
 		else
 			p.status:SetTextColor(1, 0.3, 0.3)
-			p.status:SetText(how)
+			p.status:SetText(err)
 		end
 	end
 	save:SetScript("OnClick", doSave)
@@ -482,13 +357,6 @@ if Menu and Menu.ModifyMenu then
 		end
 	end)
 end
-
-D.On("LINKS_SAVED", function()
-	if panel and panel:IsShown() then
-		panel.status:SetTextColor(0.3, 1, 0.3)
-		panel.status:SetText("Saved. Guildmates with the addon will see these buttons.")
-	end
-end)
 
 D.On("LINKS", function()
 	if panel and panel:IsShown() and not panel.discord:HasFocus() and not panel.logs:HasFocus() then

@@ -59,22 +59,12 @@ Control dropdown (or type `/pfg settings`). Enter the Discord invite (a
 `discord.gg` link or just the code) and the Warcraft Logs guild page, then
 **Save**. Leave a box empty to remove that button.
 
-WoW only lets its own Guild Information window change the guild's Info text,
-so there is one more step: open the guild's **Info** tab, click **Edit** next
-to Guild Information, and click **Accept**. The addon has already filled your
-links in.
-
-The links are saved as two lines at the end of the guild's Info text:
-
-```
-Discord: discord.gg/abc123
-Warcraft Logs: forever.warcraftlogs.com/guild/id/12345
-```
-
-Every member's game already receives the Info text, even when the Guild
-Master is offline, and only ranks allowed to edit it can change it. So the
-links reach everyone with the addon, members without it can still read them,
-and you can also type or edit those two lines by hand.
+WoW doesn't let addons change the guild's Info text, so the links travel
+between guildmates' addons instead. The Guild Master's addon sends them when
+you save and every time you log in, and everyone keeps a copy, so members
+who log in while you're offline get them from any guildmate who has them.
+Links straight from the Guild Master always win over a copy passed on by
+someone else, so members can't swap in their own.
 
 ### How guildmates share data
 
