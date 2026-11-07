@@ -147,7 +147,10 @@ end
 -- addon message limits.
 
 local SEP = "\t"
-local queue = {}
+-- Two queues: live changes (a new order, an accept, the guild's links) always
+-- go before bulk catch-up traffic (sync answers), so a big sync never holds
+-- up what someone just clicked.
+local live, bulk = {}, {}
 local tokens, MAX_TOKENS, REFILL = 6, 6, 1.0 -- burst of 6, then 1 per second
 
 function D.Escape(s)
@@ -171,15 +174,23 @@ function D.Unpack(msg)
 	return out
 end
 
+-- Returns false if the client says we're sending too fast (modern clients
+-- drop the message and report it rather than queueing it).
 local function rawSend(msg)
+	local result
 	if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-		C_ChatInfo.SendAddonMessage(D.PREFIX, msg, "GUILD")
+		result = C_ChatInfo.SendAddonMessage(D.PREFIX, msg, "GUILD")
 	elseif SendAddonMessage then
-		SendAddonMessage(D.PREFIX, msg, "GUILD")
+		result = SendAddonMessage(D.PREFIX, msg, "GUILD")
 	end
+	local codes = Enum and Enum.SendAddonMessageResult
+	if type(result) == "number" and codes then
+		return result ~= codes.AddonMessageThrottle and result ~= codes.ChannelThrottle and result ~= codes.GeneralError
+	end
+	return true
 end
 
-function D.Send(...)
+local function enqueue(q, ...)
 	if not D.InGuild() then
 		return
 	end
@@ -187,15 +198,34 @@ function D.Send(...)
 	if #msg > 250 then
 		msg = msg:sub(1, 250)
 	end
-	queue[#queue + 1] = msg
+	q[#q + 1] = msg
+end
+
+-- A live change: sent as soon as the rate limit allows.
+function D.Send(...)
+	enqueue(live, ...)
+end
+
+-- Catch-up traffic: sent when nothing live is waiting.
+function D.SendBulk(...)
+	enqueue(bulk, ...)
+end
+
+function D.QueueSizes()
+	return #live, #bulk
 end
 
 local comm = CreateFrame("Frame")
 comm:SetScript("OnUpdate", function(_, elapsed)
 	tokens = math.min(MAX_TOKENS, tokens + elapsed / REFILL)
-	while tokens >= 1 and #queue > 0 do
+	while tokens >= 1 and (#live > 0 or #bulk > 0) do
 		tokens = tokens - 1
-		rawSend(table.remove(queue, 1))
+		local q = #live > 0 and live or bulk
+		if rawSend(q[1]) then
+			table.remove(q, 1)
+		else
+			tokens = -1 -- throttled: keep the message and back off a moment
+		end
 	end
 end)
 

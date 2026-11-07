@@ -395,20 +395,26 @@ end
 -- How many item IDs fit in one message after the other fields.
 local PER_MESSAGE = 24
 
-function D.SendRecipes(name)
+-- since: only professions re-shared after this time (sync answers send in bulk).
+function D.SendRecipes(name, since)
 	local all = recipes()
 	local entry = all and all[name]
 	if not entry then
 		return
 	end
+	local send = since and D.SendBulk or D.Send
 	for code, r in pairs(entry.profs) do
+		if since and (r.ts or 0) <= since then
+			-- they already have this one
+		else
 		local list = {}
 		for id in pairs(r.ids) do
 			list[#list + 1] = id
 		end
 		table.sort(list)
 		for i = 1, #list, PER_MESSAGE do
-			D.Send("K", name, code, r.ts, entry.guid or "", table.concat(list, ",", i, math.min(#list, i + PER_MESSAGE - 1)))
+			send("K", name, code, r.ts, entry.guid or "", table.concat(list, ",", i, math.min(#list, i + PER_MESSAGE - 1)))
+		end
 		end
 	end
 end

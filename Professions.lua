@@ -148,10 +148,12 @@ local function store(name, ts, list, guid)
 	return true
 end
 
-function D.SendProfessions(name)
+-- since: only if they changed after this time (sync answers send in bulk).
+function D.SendProfessions(name, since)
 	local entry = D.GetProfessions(name)
-	if entry then
-		D.Send("P", name, entry.ts, encode(entry.list), entry.guid or "")
+	if entry and (not since or (entry.ts or 0) > since) then
+		local send = since and D.SendBulk or D.Send
+		send("P", name, entry.ts, encode(entry.list), entry.guid or "")
 	end
 end
 

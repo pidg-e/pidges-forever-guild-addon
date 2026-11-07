@@ -52,8 +52,8 @@ local function fromFields(f)
 end
 D._orderFromFields = fromFields
 
-local function send(kind, o)
-	D.Send(kind, unpack(toFields(o)))
+local function send(kind, o, isBulk)
+	(isBulk and D.SendBulk or D.Send)(kind, unpack(toFields(o)))
 end
 
 -- Storage -------------------------------------------------------------------------
@@ -264,43 +264,57 @@ function D.CancelOrder(id)
 end
 
 -- Sync ----------------------------------------------------------------------------
--- When someone logs in they ask the guild for everything ("S"). One member
--- answers: each waits a random moment, and the first to start announces it
--- ("D") so the others stand down. The answer is every order ("R"), every
--- member's professions ("P") and what their recipes make ("K").
+-- When someone logs in they ask the guild for what changed since their last
+-- sync ("S" <since>; 0 = everything). One member answers: each waits a random
+-- moment, and the first to start announces it ("D") so the others stand down.
+-- The answer is the orders ("R"), members' professions ("P") and what their
+-- recipes make ("K") that changed after <since>, sent as bulk traffic so live
+-- changes go first.
 
-local pending = {} -- requester -> true while we're waiting to answer them
+local pending = {} -- requester -> since, while we're waiting to answer them
+local MARGIN = 600 -- ask from a bit before the last sync, in case clocks or a message lagged
 
-function D.RequestSync()
-	if orders() then
-		D.Send("S")
+-- full: ask for everything, not just what changed.
+function D.RequestSync(full)
+	local data = D.Data()
+	if not data then
+		return
 	end
+	local since = 0
+	if not full and data.lastSync then
+		since = math.max(0, data.lastSync - MARGIN)
+	end
+	D.Send("S", since)
 end
 
 local function answer(requester)
-	if not pending[requester] then
+	local since = pending[requester]
+	if not since then
 		return
 	end
 	pending[requester] = nil
 	D.Send("D", requester)
 	for _, o in pairs(orders() or {}) do
-		send("R", o)
+		if (o.updated or o.created or 0) > since then
+			send("R", o, true)
+		end
 	end
 	local data = D.Data()
 	for name in pairs(data and data.profs or {}) do
-		D.SendProfessions(name)
+		D.SendProfessions(name, since)
 	end
 	for name in pairs(data and data.recipes or {}) do
-		D.SendRecipes(name)
+		D.SendRecipes(name, since)
 	end
 end
 D._answerSync = answer
 
-D.Handle("S", function(_, sender)
+D.Handle("S", function(f, sender)
 	if not orders() then
 		return
 	end
-	pending[sender] = true
+	local since = tonumber(f[2]) or 0
+	pending[sender] = math.min(pending[sender] or since, since)
 	local wait = 1 + math.random() * 4
 	if C_Timer then
 		C_Timer.After(wait, function()
@@ -310,7 +324,15 @@ D.Handle("S", function(_, sender)
 end)
 
 D.Handle("D", function(f)
-	pending[D.FullName(f[2]) or ""] = nil
+	local requester = D.FullName(f[2]) or ""
+	pending[requester] = nil
+	-- Someone is answering our sync: next time we only need what changed after now.
+	if requester == D.Me() then
+		local data = D.Data()
+		if data then
+			data.lastSync = D.Now()
+		end
+	end
 end)
 
 function D.PruneOrders()
@@ -338,6 +360,6 @@ D.On("GUILD", function(member)
 end)
 
 D.Command("sync", function()
-	D.RequestSync()
+	D.RequestSync(true)
 	D.print("asked the guild for the latest orders and professions.")
 end, "/pfg sync - fetch the latest orders and professions from the guild")
