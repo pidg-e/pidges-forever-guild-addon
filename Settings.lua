@@ -133,6 +133,39 @@ function D.Links()
 	return data and data.links or {}
 end
 
+-- The guild Info text. Modern clients only have C_GuildInfo.GetInfoText and
+-- SetInfoText; older ones have the global functions.
+local function getInfoText()
+	if C_GuildInfo and C_GuildInfo.GetInfoText then
+		return C_GuildInfo.GetInfoText() or ""
+	end
+	if GetGuildInfoText then
+		return GetGuildInfoText() or ""
+	end
+end
+
+local function setInfoText(text)
+	if C_GuildInfo and C_GuildInfo.SetInfoText then
+		C_GuildInfo.SetInfoText(text)
+		return true
+	end
+	if SetGuildInfoText then
+		SetGuildInfoText(text)
+		return true
+	end
+	return false
+end
+
+local function rosterLoaded()
+	return (GetNumGuildMembers and GetNumGuildMembers() or 0) > 0
+end
+
+-- Links the Guild Master just saved, until the server sends back an Info
+-- text that has them. Until then (or until it gives up), an older copy of
+-- the text arriving in the meantime doesn't undo the save.
+local pending
+local PENDING_SECONDS = 30
+
 local function setLinks(links)
 	local data = D.Data()
 	if not data then
@@ -157,14 +190,26 @@ end
 -- the roster, so an empty text before the roster is loaded means "not here
 -- yet", not "no links".
 function D.ReadGuildLinks()
-	if not D.InGuild() or not GetGuildInfoText then
+	if not D.InGuild() then
 		return
 	end
-	local text = GetGuildInfoText() or ""
-	local loaded = text ~= "" or ((GetNumGuildMembers and GetNumGuildMembers() or 0) > 0)
-	if loaded then
-		setLinks(D.ParseLinks(text))
+	local text = getInfoText()
+	if not text or (text == "" and not rosterLoaded()) then
+		return
 	end
+	local links = D.ParseLinks(text)
+	if pending then
+		if links.discord == pending.discord and links.logs == pending.logs then
+			pending = nil
+		elseif D.Now() < pending.expires then
+			return
+		else
+			pending = nil
+			D.print("the server didn't keep the new links in the guild Info text. Please try saving again.")
+			D.Fire("LINKS_FAILED")
+		end
+	end
+	setLinks(links)
 end
 
 local watcher = CreateFrame("Frame")
@@ -204,19 +249,29 @@ function D.SaveLinks(discordText, logsText)
 	if not logs then
 		return false, "That doesn't look like a Warcraft Logs guild page (warcraftlogs.com/guild/...)."
 	end
-	local old = GetGuildInfoText and GetGuildInfoText() or ""
+	local old = getInfoText()
+	-- Never write over an Info text we haven't seen yet.
+	if not old or (old == "" and not rosterLoaded()) then
+		requestRoster()
+		return false, "The guild's Info text hasn't loaded yet. Try again in a few seconds."
+	end
 	local new = D.BuildInfoText(old, discord, logs)
 	if #new > MAX_INFO then
 		return false, ("The guild's Info text is too long to add these (%d of %d characters). Shorten it under Guild Information first."):format(#new, MAX_INFO)
 	end
+	local links = { discord = discord ~= "" and discord or nil, logs = logs ~= "" and logs or nil }
 	if new ~= old then
-		SetGuildInfoText(new)
+		if not setInfoText(new) then
+			return false, "This game client has no way for addons to change the guild Info text."
+		end
+		pending = { discord = links.discord, logs = links.logs, expires = D.Now() + PENDING_SECONDS }
+		if C_Timer then
+			C_Timer.After(2, requestRoster)
+			C_Timer.After(PENDING_SECONDS + 1, D.ReadGuildLinks)
+		end
 	end
-	setLinks({ discord = discord ~= "" and discord or nil, logs = logs ~= "" and logs or nil })
+	setLinks(links)
 	D.Send("L")
-	if C_Timer then
-		C_Timer.After(2, requestRoster)
-	end
 	return true
 end
 
@@ -385,6 +440,13 @@ if Menu and Menu.ModifyMenu then
 		end
 	end)
 end
+
+D.On("LINKS_FAILED", function()
+	if panel and panel:IsShown() then
+		panel.status:SetTextColor(1, 0.3, 0.3)
+		panel.status:SetText("The server didn't keep the change. Please try again.")
+	end
+end)
 
 D.On("LINKS", function()
 	if panel and panel:IsShown() and not panel.discord:HasFocus() and not panel.logs:HasFocus() then
