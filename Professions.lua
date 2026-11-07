@@ -1,4 +1,4 @@
--- Dreamscape: guild members' professions. Each member's addon reads their own
+-- Pidge's Forever Guild: guild members' professions. Each member's addon reads their own
 -- professions and shares them with the guild; everyone keeps what they hear,
 -- so you can see a member's professions even while they're offline. Shown in
 -- a panel under the member details on the guild roster.
@@ -279,7 +279,7 @@ local function memberName(detail, memberInfo)
 end
 
 local function createPanel(detail)
-	local p = CreateFrame("Frame", "DreamscapeMemberProfessions", detail)
+	local p = CreateFrame("Frame", "PFGMemberProfessions", detail)
 	p:SetPoint("TOPLEFT", detail, "BOTTOMLEFT", 0, 2)
 	p:SetPoint("TOPRIGHT", detail, "BOTTOMRIGHT", 0, 2)
 	p:SetHeight(60)
@@ -338,7 +338,7 @@ function D.IsMe(name, guid)
 end
 
 function D.ShowMemberProfessions(detail, name, guid)
-	if not D.InDreamscape() then
+	if not D.InGuild() then
 		if panel then
 			panel:Hide()
 		end
@@ -376,7 +376,7 @@ function D.ShowMemberProfessions(detail, name, guid)
 		if entry then
 			panel.note:SetText("No professions.")
 		else
-			panel.note:SetText("Unknown. They need the Dreamscape addon, and to log in once with it.")
+			panel.note:SetText("Unknown. They need Pidge's Forever Guild AddOn, and to log in once with it.")
 		end
 	end
 	local noteH = (panel.note:GetText() or "") == "" and 0 or (panel.note:GetStringHeight() or 12) + 6
@@ -407,7 +407,7 @@ D.On("PROFESSIONS", function(name, guid)
 	end
 end)
 
--- /ds profs: what the addon sees, for troubleshooting.
+-- /pfg profs: what the addon sees, for troubleshooting.
 D.Command("profs", function()
 	local apis = {}
 	if GetSkillLineInfo then
@@ -433,4 +433,4 @@ D.Command("profs", function()
 		n = n + 1
 	end
 	D.print(("saved as %s; know professions for %d member(s)."):format(D.Me(), n))
-end, "/ds profs - check what professions the addon can see")
+end, "/pfg profs - check what professions the addon can see")

@@ -1,4 +1,4 @@
--- Dreamscape: item names for the crafting order form. WoW has no way to
+-- Pidge's Forever Guild: item names for the crafting order form. WoW has no way to
 -- search every item by name, so the addon keeps its own list of items it has
 -- come across: things in your bags, item links in chat, items on orders, and
 -- the recipes guild crafters know. Crafters share what their recipes make,
@@ -11,11 +11,11 @@ local D = ns.D
 -- Item names (the same for every guild, so kept outside the guild data) --------
 
 local function cache()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
-	DreamscapeDB.items = DreamscapeDB.items or {}
-	return DreamscapeDB.items
+	PidgesForeverGuildDB.items = PidgesForeverGuildDB.items or {}
+	return PidgesForeverGuildDB.items
 end
 
 local function getInfo(id)
@@ -26,23 +26,23 @@ local function getInfo(id)
 end
 
 -- Craftable items ------------------------------------------------------------------
--- DreamscapeDB.crafts[itemID] = profession code. Only these can be ordered.
+-- PidgesForeverGuildDB.crafts[itemID] = profession code. Only these can be ordered.
 -- The game tells us what's craftable three ways: recipe spells (on clients
 -- with the modern profession API), recipe items ("Pattern: Robe of the
 -- Archmage", a Tailoring recipe), and what guild crafters' recipes make.
 
 local function crafts()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
-	DreamscapeDB.crafts = DreamscapeDB.crafts or {}
-	return DreamscapeDB.crafts
+	PidgesForeverGuildDB.crafts = PidgesForeverGuildDB.crafts or {}
+	return PidgesForeverGuildDB.crafts
 end
 
 -- Recipe item names waiting for their product's name: lower name -> code.
 local function recipeProducts()
-	DreamscapeDB.recipeProducts = DreamscapeDB.recipeProducts or {}
-	return DreamscapeDB.recipeProducts
+	PidgesForeverGuildDB.recipeProducts = PidgesForeverGuildDB.recipeProducts or {}
+	return PidgesForeverGuildDB.recipeProducts
 end
 
 local byName -- lower name -> itemID, built on first use
@@ -197,14 +197,14 @@ local CRAFTED_CLASSES = { [0] = true, [1] = true, [2] = true, [4] = true, [6] = 
 local inFlight, inFlightCount = {}, 0
 
 local function scanState()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
 	local build = GetBuildInfo and select(4, GetBuildInfo()) or 0
-	local st = DreamscapeDB.itemScan
+	local st = PidgesForeverGuildDB.itemScan
 	if not st or st.build ~= build or st.v ~= SCAN_VERSION then
 		st = { build = build, v = SCAN_VERSION, next = 1, spell = 1 }
-		DreamscapeDB.itemScan = st
+		PidgesForeverGuildDB.itemScan = st
 	end
 	return st
 end
@@ -313,7 +313,7 @@ local function scanStep(now)
 end
 D._scanItemsStep = scanStep
 
--- How far along the walk is, for /ds items: items read, of how many, and
+-- How far along the walk is, for /pfg items: items read, of how many, and
 -- how many craftable items we know (and have names for).
 function D.ItemScanProgress()
 	local st = scanState()
@@ -604,7 +604,7 @@ D.RegisterEvents(ev, "GET_ITEM_INFO_RECEIVED", "BAG_UPDATE_DELAYED")
 
 local recipeScan, bagScan = false, false
 ev:SetScript("OnEvent", function(_, event, a1)
-	if not D.InDreamscape() then
+	if not D.InGuild() then
 		return
 	end
 	if event == "GET_ITEM_INFO_RECEIVED" then
@@ -679,4 +679,4 @@ end)
 D.Command("items", function()
 	local done, total, craftable, named = D.ItemScanProgress()
 	D.print(("knows %d craftable items, %d with names so far (read %d of %d item IDs)."):format(craftable, named, done, total))
-end, "/ds items - how many items the order form can suggest")
+end, "/pfg items - how many items the order form can suggest")

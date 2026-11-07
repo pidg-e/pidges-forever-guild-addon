@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: |cff9b7bffPidge's Forever Guild|r
+## Notes: Guild tools for any guild on WoW Forever: crafting orders, members' professions, and your guild's Discord and Warcraft Logs links.
+## Author: Pidge
+## Version: 1.0.0
+## SavedVariables: PidgesForeverGuildDB
+## IconTexture: Interface\AddOns\PidgesForeverGuild\media\github
+
+Core.lua
+Settings.lua
+Links.lua
+Professions.lua
+Orders.lua
+Items.lua
+OrdersUI.lua
+CraftButton.lua

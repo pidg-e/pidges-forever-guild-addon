@@ -1,4 +1,4 @@
--- Dreamscape: the Crafting Orders tab on the guild panel. It sits under
+-- Pidge's Forever Guild: the Crafting Orders tab on the guild panel. It sits under
 -- Blizzard's side tabs (Chat, Roster, Benefits, Info) and covers the content
 -- area while it's selected.
 
@@ -801,7 +801,7 @@ local function createPanel()
 	-- Laid out like the guild Info page: the title sits on the frame's grey
 	-- strip at the top (which shows through), and the content fills the same
 	-- box that Info and Guild News share.
-	local p = CreateFrame("Frame", "DreamscapeOrdersFrame", cf)
+	local p = CreateFrame("Frame", "PFGOrdersFrame", cf)
 	p:SetPoint("TOPLEFT", cf.CommunitiesList, "TOPRIGHT", 0, 0)
 	p:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", -6, 26)
 	p:SetFrameLevel(500)
@@ -952,7 +952,7 @@ local function createPanel()
 
 	local help = p:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	help:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 6)
-	help:SetText("Only guildmates with the Dreamscape addon see these orders.")
+	help:SetText("Only guildmates with Pidge's Forever Guild AddOn see these orders.")
 
 	p:SetScript("OnShow", D.RefreshOrders)
 	return p
@@ -1034,11 +1034,11 @@ function D.ShowOrders(show)
 end
 
 -- Our tab shows whenever Blizzard's guild tabs do (a guild is selected), and
--- only for members of <Dreamscape>.
+-- only while we are in a guild.
 local function updateTab()
 	local cf = CommunitiesFrame
 	local info = cf.GuildInfoTab
-	local shown = info and info:IsShown() and D.InDreamscape()
+	local shown = info and info:IsShown() and D.InGuild()
 	tab:SetShown(shown and true or false)
 	if not shown then
 		D.ShowOrders(false)
@@ -1049,9 +1049,9 @@ end
 
 local function createTab()
 	local cf = CommunitiesFrame
-	local ok, t = pcall(CreateFrame, "CheckButton", "DreamscapeOrdersTab", cf, "CommunitiesFrameTabTemplate")
+	local ok, t = pcall(CreateFrame, "CheckButton", "PFGOrdersTab", cf, "CommunitiesFrameTabTemplate")
 	if not ok or not t then
-		t = CreateFrame("CheckButton", "DreamscapeOrdersTab", cf)
+		t = CreateFrame("CheckButton", "PFGOrdersTab", cf)
 		t:SetSize(32, 32)
 	end
 	if type(t.Icon) ~= "table" then
@@ -1157,4 +1157,4 @@ D.Command({ "orders", "craft" }, function()
 			end
 		end)
 	end
-end, "/ds orders - open the guild's crafting orders")
+end, "/pfg orders - open the guild's crafting orders")

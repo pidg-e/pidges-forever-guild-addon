@@ -1,4 +1,4 @@
--- Dreamscape: guild crafting orders. Orders live in every member's saved data
+-- Pidge's Forever Guild: guild crafting orders. Orders live in every member's saved data
 -- and travel over guild addon messages, so anyone with the addon sees the same
 -- board, even for members who are offline.
 --
@@ -340,4 +340,4 @@ end)
 D.Command("sync", function()
 	D.RequestSync()
 	D.print("asked the guild for the latest orders and professions.")
-end, "/ds sync - fetch the latest orders and professions from the guild")
+end, "/pfg sync - fetch the latest orders and professions from the guild")

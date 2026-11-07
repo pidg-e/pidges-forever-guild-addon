@@ -1,7 +1,9 @@
-# Dreamscape
+# Pidge's Forever Guild AddOn
 
-Guild addon for **<Dreamscape>** on WoW Forever. Nothing in it shows up, or
-talks to anyone, unless your character is in <Dreamscape>.
+Guild tools for any guild on WoW Forever: crafting orders, members'
+professions, and buttons for your guild's Discord and Warcraft Logs pages.
+Nothing in it shows up, or talks to anyone, unless your character is in a
+guild.
 
 ## Features
 
@@ -37,18 +39,37 @@ skill level, even while they're offline.
 
 ### Links
 
-Three buttons on the guild panel's **Info** tab, level with the "Info" title
-above the Message of the Day:
+Buttons on the guild panel's **Info** tab, level with the "Info" title above
+the Message of the Day:
 
-* **Discord** shows the guild's invite link, `https://discord.gg/4uNGKeyyjN`.
-* **Warcraft Logs** (left of Discord) shows the guild's page,
-  `https://forever.warcraftlogs.com/guild/id/833285`.
-* **Dreamscape Addon** (GitHub, left of Warcraft Logs) shows this repository,
-  `https://github.com/pidg-e/dreamscape-addon`.
+* **Pidge's Forever Guild AddOn** (GitHub) shows this repository. It is
+  always there.
+* **Discord** and **Warcraft Logs** show your guild's invite and logs page,
+  once your Guild Master has set them. They appear to the right of the
+  GitHub button, which moves left to make room.
 
 Clicking one opens a box with the link already selected: press **Ctrl+C**,
 then paste it into your browser. (WoW doesn't let addons open web pages, so
 copying is the closest it can get.)
+
+### Guild Master settings
+
+The Guild Master gets a **Pidge's Forever Settings** entry in the Guild
+Control dropdown (or type `/pfg settings`). Enter the Discord invite (a
+`discord.gg` link or just the code) and the Warcraft Logs guild page, then
+**Save**. Leave a box empty to remove that button.
+
+The links are saved as two lines at the end of the guild's Info text:
+
+```
+Discord: discord.gg/abc123
+Warcraft Logs: forever.warcraftlogs.com/guild/id/12345
+```
+
+Every member's game already receives the Info text, even when the Guild
+Master is offline, and only ranks allowed to edit it can change it. So the
+links reach everyone with the addon, members without it can still read them,
+and you can also type or edit those two lines by hand.
 
 ### How guildmates share data
 
@@ -63,24 +84,17 @@ online guildmate sends you everything you missed.
 
 ### Commands
 
-* `/ds orders` opens the crafting orders.
-* `/ds sync` asks the guild for the latest orders and professions.
-* `/ds items` shows how many items the order form can suggest.
-* `/ds discord`, `/ds logs`, `/ds github` show the links.
+* `/pfg orders` opens the crafting orders.
+* `/pfg sync` asks the guild for the latest orders and professions.
+* `/pfg items` shows how many items the order form can suggest.
+* `/pfg profs` shows what professions the addon can see.
+* `/pfg discord`, `/pfg logs`, `/pfg github` show the links.
+* `/pfg settings` (Guild Master) opens the link settings.
 
 ## Install
 
-Copy `addon/Dreamscape` into
-`World of Warcraft\_forever_\Interface\AddOns\`.
-
-## Development
-
-```
-pip install pytest lupa
-python -m pytest tests
-```
-
-The tests load the real addon Lua against a small mock of the WoW API, and
-run several "guildmates" side by side, passing their addon messages between
-them.
-`python tools/make_icons.py` redraws the icons in `media/`.
+Download this repository (Code > Download ZIP), unzip it, rename the folder
+to `PidgesForeverGuild`, and put it in
+`World of Warcraft\_forever_\Interface\AddOns\`, so that
+`AddOns\PidgesForeverGuild\PidgesForeverGuild.toc` exists. Then restart the
+game.

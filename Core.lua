@@ -1,18 +1,19 @@
--- Dreamscape: shared setup. Saved data, names, guild addon messages and the
+-- Pidge's Forever Guild: shared setup. Saved data, names, guild addon messages and the
 -- guild panel loader that the other files build on.
 
 local ADDON, ns = ...
 
-Dreamscape = Dreamscape or {}
-local D = Dreamscape
+PidgesForeverGuild = PidgesForeverGuild or {}
+local D = PidgesForeverGuild
 ns.D = D
 
-D.PREFIX = "Dreamscape"
-D.GUILD_NAME = "Dreamscape" -- every feature is for members of this guild only
+D.PREFIX = "PidgesForever" -- addon message prefix (16 characters at most)
+D.TITLE = "Pidge's Forever Guild AddOn"
 D.COLOR = "|cff9b7bff"
+D.MEDIA = "Interface\\AddOns\\" .. ADDON .. "\\media\\"
 
 function D.print(msg)
-	DEFAULT_CHAT_FRAME:AddMessage(D.COLOR .. "Dreamscape|r: " .. msg)
+	DEFAULT_CHAT_FRAME:AddMessage(D.COLOR .. "Pidge's Forever|r: " .. msg)
 end
 
 -- Names -----------------------------------------------------------------------
@@ -30,7 +31,7 @@ end
 -- with. That spelling is remembered for next time.
 function D.Me()
 	if not myName then
-		local saved = DreamscapeDB and DreamscapeDB.me and DreamscapeDB.me[D.MyGUID() or ""]
+		local saved = PidgesForeverGuildDB and PidgesForeverGuildDB.me and PidgesForeverGuildDB.me[D.MyGUID() or ""]
 		if saved then
 			myName = saved
 		else
@@ -47,9 +48,9 @@ local helloNonce
 local function learnMyName(sender)
 	myName = sender
 	local guid = D.MyGUID()
-	if guid and DreamscapeDB then
-		DreamscapeDB.me = DreamscapeDB.me or {}
-		DreamscapeDB.me[guid] = sender
+	if guid and PidgesForeverGuildDB then
+		PidgesForeverGuildDB.me = PidgesForeverGuildDB.me or {}
+		PidgesForeverGuildDB.me[guid] = sender
 	end
 	D.Fire("ME", sender)
 end
@@ -81,20 +82,31 @@ function D.Now()
 end
 
 -- Saved data ----------------------------------------------------------------
--- DreamscapeDB.guilds[guild] = { orders = { [id] = order }, profs = { [name] = entry } }
+-- PidgesForeverGuildDB.guilds[guild] = { orders = { [id] = order }, profs = { [name] = entry } }
 
--- Are we in <Dreamscape>? Nothing in the addon shows or talks otherwise.
+-- Are we in a guild? Nothing in the addon shows or talks otherwise.
 -- The guild name can take a few seconds to arrive after login, so until it
--- does this is false and the "GUILD" event fires once it changes.
-function D.InDreamscape()
-	if not IsInGuild() then
-		return false
-	end
-	return GetGuildInfo("player") == D.GUILD_NAME
+-- does this is false and the "GUILD" event fires once it changes (or when we
+-- move to another guild).
+function D.InGuild()
+	return D.GuildKey() ~= nil
 end
 
+-- "Guild Name-Realm": saved data is kept per guild, so a character that
+-- changes guild (or an alt in another one) never mixes the two.
 function D.GuildKey()
-	return D.InDreamscape() and D.GUILD_NAME or nil
+	if not IsInGuild() then
+		return nil
+	end
+	local name, _, _, realm = GetGuildInfo("player")
+	if not name or name == "" then
+		return nil
+	end
+	realm = realm or (GetNormalizedRealmName and GetNormalizedRealmName())
+	if realm and realm ~= "" then
+		return name .. "-" .. realm
+	end
+	return name
 end
 
 function D.Data()
@@ -102,11 +114,11 @@ function D.Data()
 	if not key then
 		return nil
 	end
-	DreamscapeDB.guilds = DreamscapeDB.guilds or {}
-	local g = DreamscapeDB.guilds[key]
+	PidgesForeverGuildDB.guilds = PidgesForeverGuildDB.guilds or {}
+	local g = PidgesForeverGuildDB.guilds[key]
 	if not g then
 		g = { orders = {}, profs = {} }
-		DreamscapeDB.guilds[key] = g
+		PidgesForeverGuildDB.guilds[key] = g
 	end
 	return g
 end
@@ -168,7 +180,7 @@ local function rawSend(msg)
 end
 
 function D.Send(...)
-	if not D.InDreamscape() then
+	if not D.InGuild() then
 		return
 	end
 	local msg = D.Pack(...)
@@ -205,12 +217,12 @@ end
 
 D.RegisterEvents(comm, "CHAT_MSG_ADDON", "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_GUILD_UPDATE", "GUILD_ROSTER_UPDATE")
 
-local wasMember = false
+local lastGuild = nil
 local function checkGuild()
-	local now = D.InDreamscape()
-	if now ~= wasMember then
-		wasMember = now
-		D.Fire("GUILD", now)
+	local now = D.GuildKey()
+	if now ~= lastGuild then
+		lastGuild = now
+		D.Fire("GUILD", now ~= nil)
 	end
 end
 D.CheckGuild = checkGuild
@@ -225,7 +237,7 @@ end)
 comm:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
 	if event == "ADDON_LOADED" then
 		if a1 == ADDON then
-			DreamscapeDB = DreamscapeDB or {}
+			PidgesForeverGuildDB = PidgesForeverGuildDB or {}
 			if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
 				C_ChatInfo.RegisterAddonMessagePrefix(D.PREFIX)
 			end
@@ -249,7 +261,7 @@ comm:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
 		checkGuild()
 	elseif event == "CHAT_MSG_ADDON" then
 		local prefix, msg, channel, sender = a1, a2, a3, a4
-		if prefix ~= D.PREFIX or channel ~= "GUILD" or not sender or not D.InDreamscape() then
+		if prefix ~= D.PREFIX or channel ~= "GUILD" or not sender or not D.InGuild() then
 			return
 		end
 		sender = D.FullName(sender)
@@ -311,11 +323,11 @@ D.On("ADDON_LOADED", function(name)
 	end
 end)
 
--- /ds ---------------------------------------------------------------------------
+-- /pfg --------------------------------------------------------------------------
 
 local commands, helps = {}, {}
 
--- D.Command({"logs", "wcl"}, fn, "/ds logs - ...")
+-- D.Command({"logs", "wcl"}, fn, "/pfg logs - ...")
 function D.Command(names, fn, help)
 	for _, n in ipairs(type(names) == "table" and names or { names }) do
 		commands[n] = fn
@@ -325,11 +337,11 @@ function D.Command(names, fn, help)
 	end
 end
 
-SLASH_DREAMSCAPE1 = "/ds"
-SLASH_DREAMSCAPE2 = "/dreamscape"
-SlashCmdList.DREAMSCAPE = function(msg)
-	if not D.InDreamscape() then
-		D.print("this addon is only for members of <" .. D.GUILD_NAME .. ">.")
+SLASH_PIDGESFOREVERGUILD1 = "/pfg"
+SLASH_PIDGESFOREVERGUILD2 = "/pidgesforever"
+SlashCmdList.PIDGESFOREVERGUILD = function(msg)
+	if not D.InGuild() then
+		D.print("join a guild to use this addon.")
 		return
 	end
 	local cmd, rest = (msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
