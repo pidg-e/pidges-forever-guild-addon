@@ -980,10 +980,10 @@ local function createPanel()
 	header:SetPoint("TOPLEFT", box, "TOPLEFT", 2, -2)
 	header:SetPoint("TOPRIGHT", box, "TOPRIGHT", -2, -2)
 	header:SetHeight(30)
-	-- A thin grey line between the filter tabs and the list.
+	-- A grey line between the filter tabs and the list.
 	local line = box:CreateTexture(nil, "ARTWORK")
 	line:SetColorTexture(0.45, 0.45, 0.45, 0.9)
-	line:SetHeight(1)
+	line:SetHeight(3)
 	line:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
 	line:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, 0)
 	p.headerLine = line
