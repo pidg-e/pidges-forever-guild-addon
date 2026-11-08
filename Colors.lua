@@ -125,6 +125,24 @@ local function unitTarget(unit)
 	return name
 end
 
+-- Only players we can actually whisper: same faction, online, and not in a
+-- different realm group. Whispering anyone else makes the game go looking
+-- for them (a /who-style lookup and a "not found" message).
+local function canWhisper(unit)
+	local mine, theirs = UnitFactionGroup and UnitFactionGroup("player"), UnitFactionGroup and UnitFactionGroup(unit)
+	if not mine or not theirs or issecret(theirs) or theirs ~= mine then
+		return false
+	end
+	if UnitIsConnected and not UnitIsConnected(unit) then
+		return false
+	end
+	if UnitIsSameServer and not UnitIsSameServer(unit) then
+		return false
+	end
+	return true
+end
+D._canWhisper = canWhisper
+
 local function onUnitTooltip(tooltip)
 	if tooltip ~= GameTooltip or not D.InGuild() or not tooltip.GetUnit then
 		return
@@ -147,7 +165,9 @@ local function onUnitTooltip(tooltip)
 			break
 		end
 	end
-	askColors(guild, unitTarget(unit))
+	if canWhisper(unit) then
+		askColors(guild, unitTarget(unit))
+	end
 end
 
 local function safeTooltip(tooltip)
