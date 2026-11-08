@@ -37,6 +37,15 @@ A **Crafting Orders** tab (anvil icon) under the guild panel's side tabs.
   whisper the other person. You get a chat message when someone accepts or
   finishes your order.
 
+### Wishlist
+
+A **Wishlist** tab (note icon) just above Crafting Orders. List items you want
+or need (type a name or shift-click an item, with a quantity and a short note),
+and see what everyone else is after. **Everyone** shows the whole guild's list,
+**My Wishes** just yours. Whisper someone from their wish (or right-click it),
+and remove your own when you've got it. Officers can remove anyone's. Up to 30
+wishes each; it syncs between guildmates just like the orders.
+
 ### Members' professions
 
 Click a member on the guild **Roster** and a **Professions** panel appears
@@ -130,6 +139,7 @@ in-game note asking them to.
 ### Commands
 
 * `/pfg orders` opens the crafting orders.
+* `/pfg wishlist` opens the wishlist.
 * `/pfg sync` asks the guild for the latest orders and professions.
 * `/pfg items` shows how many items the order form can suggest.
 * `/pfg profs` shows what professions the addon can see.

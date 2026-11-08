@@ -97,6 +97,9 @@ local function whisper(name)
 	end
 end
 
+D._itemInfo = itemInfo
+D._whisper = whisper
+
 local function act(fn, id)
 	local ok, err = fn(id)
 	if not ok and err then
@@ -1130,6 +1133,11 @@ local function uncover()
 		covered[i] = nil
 	end
 end
+-- Shared with the wishlist, which covers the same frames.
+D.CoverGuildContent, D.UncoverGuildContent = cover, uncover
+D.ForgetCoveredContent = function()
+	wipe(covered)
+end
 
 local function setChecked()
 	local cf = CommunitiesFrame
@@ -1152,6 +1160,7 @@ function D.ShowOrders(show)
 	end
 	if show then
 		if not panel:IsShown() then
+			D.Fire("PANEL", "orders") -- the wishlist closes
 			cover()
 		end
 		panel:Show()

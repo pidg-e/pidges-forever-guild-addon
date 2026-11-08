@@ -526,7 +526,8 @@ end
 
 -- Craftable items whose names contain `text`, best first: things the guild
 -- can craft, then names that start with it, then the rest.
-function D.SearchItems(text, limit)
+-- any: every item we know of, not only craftable ones (for the wishlist).
+function D.SearchItems(text, limit, any)
 	limit = limit or 8
 	local out = {}
 	text = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
@@ -543,7 +544,7 @@ function D.SearchItems(text, limit)
 	end
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
-		local at = craftable[id] and name:lower():find(text, 1, true)
+		local at = (any or craftable[id]) and name:lower():find(text, 1, true)
 		if at then
 			out[#out + 1] = { id = id, name = name, craft = makeable[id] or false, prefix = at == 1 }
 		end
@@ -567,20 +568,20 @@ function D.SearchItems(text, limit)
 end
 
 -- The craftable item a typed name means, if we know one by exactly that name.
-function D.FindItem(text)
+function D.FindItem(text, any)
 	text = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
 	if text == "" then
 		return nil
 	end
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
-		if craftable[id] and name:lower() == text then
+		if (any or craftable[id]) and name:lower() == text then
 			return id, name
 		end
 	end
 	local name, link = getInfo(text)
 	local id = link and tonumber(link:match("item:(%d+)"))
-	if id and craftable[id] then
+	if id and (any or craftable[id]) then
 		D.LearnItem(id, name)
 		return id, name
 	end

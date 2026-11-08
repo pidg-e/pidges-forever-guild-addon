@@ -300,12 +300,41 @@ local lastSyncAsk = 0
 local lastSyncSeen = 0
 local resyncPending = false
 
--- "count:hash" over every order's id and revision.
+-- Everything that syncs this way: orders, and the wishlist (Wishlist.lua).
+-- Ids never clash (wish ids start with "w:"). Each entry: get() -> the table
+-- by id, relay(item) sends one copy as bulk traffic.
+local synced = {
+	{ get = orders, relay = function(o)
+		send("R", o, true)
+	end },
+}
+function D.RegisterSynced(get, relay)
+	synced[#synced + 1] = { get = get, relay = relay }
+end
+
+local function eachSynced(fn)
+	for _, t in ipairs(synced) do
+		for id, item in pairs(t.get() or {}) do
+			fn(id, item, t)
+		end
+	end
+end
+
+local function findSynced(id)
+	for _, t in ipairs(synced) do
+		local all = t.get()
+		if all and all[id] then
+			return all[id], t
+		end
+	end
+end
+
+-- "count:hash" over every order's (and wish's) id and revision.
 function D.OrdersDigest()
 	local keys = {}
-	for id, o in pairs(orders() or {}) do
+	eachSynced(function(id, o)
 		keys[#keys + 1] = id .. "=" .. (o.rev or 0) .. (o.crafter or "")
-	end
+	end)
 	table.sort(keys)
 	local h = 5381
 	for _, k in ipairs(keys) do
@@ -329,9 +358,9 @@ function D.RequestSync(full)
 	lastSyncAsk = D.Now()
 	local lines = {}
 	if not full then
-		for id, o in pairs(orders() or {}) do
+		eachSynced(function(id, o)
 			lines[#lines + 1] = D.Pack("M", id, o.rev or 0)
-		end
+		end)
 	end
 	lines[#lines + 1] = D.Pack("S", since, full and "full" or "list")
 	D.SendTogether(lines)
@@ -352,16 +381,15 @@ local function answer(requester)
 	pending[requester] = nil
 	local since, have = req.since, req.have
 	D.Send("D", requester)
-	local mine = orders() or {}
-	for id, o in pairs(mine) do
+	eachSynced(function(id, o, t)
 		local theirs = have and have[id]
 		if not have or not theirs or theirs < (o.rev or 0) then
-			send("R", o, true)
+			t.relay(o)
 		end
-	end
+	end)
 	if have then
 		for id, rev in pairs(have) do
-			local o = mine[id]
+			local o = findSynced(id)
 			if not o or (o.rev or 0) < rev then
 				D.SendBulk("W", requester, id)
 			end
@@ -420,10 +448,10 @@ D.Handle("W", function(f)
 	if D.FullName(f[2]) ~= D.Me() or not f[3] then
 		return
 	end
-	local o = D.GetOrder(f[3])
+	local o, t = findSynced(f[3])
 	if o and not pushed[f[3]] then
 		pushed[f[3]] = true
-		send("R", o, true)
+		t.relay(o)
 		if C_Timer then
 			C_Timer.After(5, function()
 				pushed[f[3]] = nil
