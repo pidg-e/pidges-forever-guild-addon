@@ -1,6 +1,6 @@
 -- Pidge's Forever Guild: link buttons on the guild panel's Info tab, level
 -- with the "Info" title above the Message of the Day. The addon's own
--- (GitHub) button is always there; the guild's Discord and Warcraft Logs
+-- (CurseForge) button is always there; the guild's Discord and Warcraft Logs
 -- buttons appear to its right once the Guild Master has set them (see
 -- Settings.lua), pushing it to the left. WoW can't open web pages, so
 -- clicking one shows its link ready to copy (Ctrl+C) and paste into a browser.
@@ -32,11 +32,11 @@ D.LINKS = {
 		hint = HINT,
 	},
 	{
-		key = "GitHub",
+		key = "CurseForge",
 		title = D.TITLE,
-		tooltip = D.TITLE,
-		url = "https://github.com/pidg-e/pidges-forever-guild-addon",
-		icon = D.MEDIA .. "github",
+		tooltip = D.TITLE .. " on CurseForge",
+		url = "https://www.curseforge.com/wow/addons/pidges-forever-guild-addon",
+		icon = D.MEDIA .. "curseforge",
 		hint = HINT,
 	},
 }
@@ -260,6 +260,6 @@ D.On("LINKS", placeButtons)
 
 D.Command("discord", D.ShowDiscordInvite, "/pfg discord - the guild's Discord invite link")
 D.Command({ "logs", "wcl" }, D.ShowLogs, "/pfg logs - the guild's Warcraft Logs page")
-D.Command({ "github", "addon" }, function()
+D.Command({ "curseforge", "addon", "github" }, function()
 	D.ShowLink(D.LINKS[3])
-end, "/pfg github - the addon's GitHub page")
+end, "/pfg curseforge - the addon's CurseForge page")

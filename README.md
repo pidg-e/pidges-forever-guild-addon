@@ -61,11 +61,12 @@ skill level, even while they're offline.
 Buttons on the guild panel's **Info** tab, level with the "Info" title above
 the Message of the Day:
 
-* **Pidge's Forever Guild AddOn** (GitHub) shows this repository. It is
-  always there.
+* **Pidge's Forever Guild AddOn** (CurseForge) shows the addon's
+  [CurseForge page](https://www.curseforge.com/wow/addons/pidges-forever-guild-addon).
+  It is always there.
 * **Discord** and **Warcraft Logs** show your guild's invite and logs page,
   once your Guild Master has set them. They appear to the right of the
-  GitHub button, which moves left to make room.
+  CurseForge button, which moves left to make room.
 
 Clicking one opens a box with the link already selected: press **Ctrl+C**,
 then paste it into your browser. (WoW doesn't let addons open web pages, so
@@ -147,7 +148,7 @@ in-game note asking them to.
 * `/pfg sync` asks the guild for the latest orders and professions.
 * `/pfg items` shows how many items the order form can suggest.
 * `/pfg profs` shows what professions the addon can see.
-* `/pfg discord`, `/pfg logs`, `/pfg github` show the links.
+* `/pfg discord`, `/pfg logs`, `/pfg curseforge` show the links.
 * `/pfg settings` (Guild Master) opens the settings (links, colors, officers).
 * `/pfg version` shows which version you have.
 
@@ -159,7 +160,9 @@ domain), LibDeflate (zlib, see `Libs/LibDeflate/LICENSE.txt`).
 
 ## Install
 
-Download this repository (Code > Download ZIP), unzip it, rename the folder
+Install it from
+[CurseForge](https://www.curseforge.com/wow/addons/pidges-forever-guild-addon),
+or download this repository (Code > Download ZIP), unzip it, rename the folder
 to `PidgesForeverGuild`, and put it in
 `World of Warcraft\_forever_\Interface\AddOns\`, so that
 `AddOns\PidgesForeverGuild\PidgesForeverGuild.toc` exists. Then restart the

@@ -22,7 +22,7 @@ D.Handle("V", function(f, sender)
 		end
 		if not warned then
 			warned = true
-			D.print(("a newer version (%s) is out; you have %s. Please update. %s has it, and it's at /pfg github."):format(v, D.VERSION, D.Short(sender)))
+			D.print(("a newer version (%s) is out; you have %s. Please update. %s has it, and it's at /pfg curseforge."):format(v, D.VERSION, D.Short(sender)))
 		end
 	elseif c < 0 and D.Now() - lastReply > 60 then
 		-- They're behind: tell the guild ours so they get the note.
