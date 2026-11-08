@@ -1,7 +1,7 @@
 -- Pidge's Forever Guild: guild colors. The Guild Master picks a color for the
 -- guild's name and for each rank (Settings.lua). They show:
 --
--- * in player tooltips, where the guild line becomes "Rank of <Guild>";
+-- * in player tooltips, where the guild line becomes "Rank of Guild";
 -- * in chat, wherever someone types a known guild's name (with or without
 --   the angle brackets).
 --
@@ -48,11 +48,11 @@ local function paint(hex, text)
 	return "|cff" .. (hex or "ffffff") .. text .. "|r"
 end
 
--- "Rank of <Guild>" in that guild's colors.
+-- "Rank of Guild" in that guild's colors.
 function D.GuildLine(guild, rankName, rankIndex)
 	local c = D.GuildColors(guild) or {}
 	local rankHex = c.ranks and rankIndex and c.ranks[rankIndex + 1]
-	local line = paint(c.color, "<" .. guild .. ">")
+	local line = paint(c.color, guild)
 	if rankName and rankName ~= "" then
 		line = paint(rankHex, rankName) .. paint(nil, " of ") .. line
 	end

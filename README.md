@@ -72,7 +72,7 @@ On the **Colors & Ranks** page of Pidge's Forever Settings, the Guild Master
 picks a color for the guild's name and for each rank (right-click a swatch to
 reset it to white), and ticks which ranks count as officers.
 
-* Player tooltips show the guild line as **Rank of <Guild>** in those colors.
+* Player tooltips show the guild line as **Rank of Guild** in those colors.
 * In chat, the guild's name (with or without the angle brackets) shows in the
   guild's color, in the default chat window and in chat addons such as Prat,
   Chatter or Chattynator.
