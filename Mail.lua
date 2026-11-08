@@ -2,7 +2,7 @@
 -- crafter's mail button on the order fills in the Send Mail tab: the
 -- requester, a subject, the crafted items from their bags (split to the exact
 -- amount), and a C.O.D. equal to the order's tip. The crafter checks it and
--- presses Send themselves.
+-- presses Send themselves; once that mail has gone, the order is marked done.
 
 local ADDON, ns = ...
 local D = ns.D
@@ -50,6 +50,29 @@ local function findInBags(itemID)
 end
 D._findInBags = findInBags
 
+-- The name to mail: "First Last", never the realm (everyone is on one realm).
+-- An order placed before the addon learned its owner's surname only holds the
+-- first name, so the roster fills in the rest.
+function D.MailName(name)
+	local short = (name or ""):match("^[^%-]+") or ""
+	short = short:gsub("^%s+", ""):gsub("%s+$", "")
+	if short == "" or short:find(" ", 1, true) or not (GetNumGuildMembers and GetGuildRosterInfo) then
+		return short
+	end
+	local lower = short:lower()
+	for i = 1, (GetNumGuildMembers()) or 0 do
+		local n = GetGuildRosterInfo(i)
+		local rosterShort = n and n:match("^[^%-]+")
+		if rosterShort and (rosterShort:match("^%S+") or ""):lower() == lower and rosterShort:find(" ", 1, true) then
+			return rosterShort
+		end
+	end
+	return short
+end
+
+-- The order whose mail we filled in, until it is sent (then it's done).
+local pending -- { id =, name = }
+
 local function freeAttachment()
 	for i = 1, MAX_ATTACH do
 		if not (HasSendMailItem and HasSendMailItem(i)) then
@@ -69,8 +92,10 @@ function D.MailOrder(o)
 	if MailFrameTab_OnClick then
 		MailFrameTab_OnClick(nil, 2)
 	end
+	pending = nil
+	local recipient = D.MailName(o.requester)
 	if SendMailNameEditBox then
-		SendMailNameEditBox:SetText(D.Short(o.requester))
+		SendMailNameEditBox:SetText(recipient)
 	end
 	if SendMailSubjectEditBox then
 		local item = o.itemName ~= "" and o.itemName or "your order"
@@ -129,6 +154,54 @@ function D.MailOrder(o)
 	elseif missing then
 		return false, ("Attached what you have; %d more still to go."):format(missing)
 	end
-	D.print("mail filled in" .. ((o.tip or 0) > 0 and ", with a C.O.D. for the tip" or "") .. ". Check it and press Send.")
+	if o.status == S.ACCEPTED then
+		pending = { id = o.id, name = recipient }
+	end
+	D.print("mail filled in" .. ((o.tip or 0) > 0 and ", with a C.O.D. for the tip" or "") .. ". Check it and press Send; the order is marked done once it's sent.")
 	return true
+end
+
+-- Sending -------------------------------------------------------------------------
+-- SendMail tells us who the mail is for; MAIL_SEND_SUCCESS that it went.
+
+local sending -- the pending order, while its mail is on its way
+
+local function onSendMail(recipient)
+	sending = nil
+	if pending and type(recipient) == "string" and D.SameName(D.MailName(recipient), pending.name) then
+		sending = pending
+	end
+end
+D._onSendMail = onSendMail
+
+local function onMailEvent(event)
+	if event == "MAIL_SEND_SUCCESS" then
+		local done = sending
+		sending, pending = nil, nil
+		if done then
+			local o = D.GetOrder(done.id)
+			if o and o.status == S.ACCEPTED and o.crafter == D.Me() then
+				D.CompleteOrder(done.id)
+				D.print(("mail sent; %s's order is marked done."):format(D.Short(o.requester)))
+			end
+		end
+	elseif event == "MAIL_FAILED" then
+		sending = nil
+	elseif event == "MAIL_CLOSED" then
+		sending, pending = nil, nil
+	end
+end
+D._onMailEvent = onMailEvent
+
+if hooksecurefunc and SendMail then
+	hooksecurefunc("SendMail", function(recipient)
+		pcall(onSendMail, recipient)
+	end)
+end
+if CreateFrame then
+	local ev = CreateFrame("Frame")
+	D.RegisterEvents(ev, "MAIL_SEND_SUCCESS", "MAIL_FAILED", "MAIL_CLOSED")
+	ev:SetScript("OnEvent", function(_, event)
+		onMailEvent(event)
+	end)
 end

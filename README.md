@@ -27,8 +27,9 @@ A **Crafting Orders** tab (anvil icon) under the guild panel's side tabs.
 * **My Orders** are yours: **Cancel**, or **Received** once you have it.
 * **My Crafts** are the ones you accepted: **Done** when it's handed over,
   or **Give Back** to reopen it. At a mailbox, the letter button fills in
-  the mail for you: the requester, a subject, the crafted items from your
-  bags, and a C.O.D. for the tip. Check it and press Send.
+  the mail for you: the requester (first and last name, no realm), a subject, the crafted items from your
+  bags, and a C.O.D. for the tip. Check it and press Send; once the mail
+  has gone, the order is marked Done.
 * The tip is entered in gold, silver and copper.
 * **History** keeps finished and cancelled orders for two weeks.
 * Filter by profession, hover a row for the item and note, right-click to
