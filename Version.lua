@@ -36,6 +36,7 @@ D.On("GUILD", function(member)
 		C_Timer.After(12, function()
 			if D.InGuild() then
 				D.Send("V", D.VERSION)
+				D.SendOld("V", D.VERSION) -- so v1.2.4 and older hear there's an update
 			end
 		end)
 	end

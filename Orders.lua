@@ -202,7 +202,7 @@ function D.PlaceOrder(t)
 	local now = D.Now()
 	local me = D.Me()
 	return commit({
-		id = ("%s:%d:%d"):format(me, now, math.random(100, 999)),
+		id = ("%s:%d:%d"):format(me, now, math.random(100000, 999999)),
 		requester = me,
 		itemID = t.itemID or 0,
 		itemName = name,
@@ -274,15 +274,47 @@ function D.CancelOrder(id)
 end
 
 -- Sync ----------------------------------------------------------------------------
--- When someone logs in they ask the guild for what changed since their last
--- sync ("S" <since>; 0 = everything). One member answers: each waits a random
--- moment, and the first to start announces it ("D") so the others stand down.
--- The answer is the orders ("R"), members' professions ("P") and what their
--- recipes make ("K") that changed after <since>, sent as bulk traffic so live
--- changes go first.
+-- Modelled on how CraftBoard keeps its board in step: compare a short
+-- fingerprint first, and only send what's actually different.
+--
+-- * Every member's addon says "HD <count:hash>" (a fingerprint of every order
+--   it holds and its revision) a little after login and every ~10 minutes.
+--   Anyone whose own fingerprint differs knows the boards have drifted apart.
+-- * Then one of them asks for a sync: "S" with a list of every order it holds
+--   and its revision ("M" lines), in one compressed message.
+-- * One member answers (each waits a random moment, and the first to start
+--   announces it with "D" so the others stand down). The answer is one
+--   compressed batch: the orders the asker is missing or has older copies of
+--   ("R"), members' professions ("P") and recipes ("K") changed since the
+--   asker's last sync, and "W" for the orders the asker has newer copies of.
+-- * The asker sends those "W" orders back to the whole guild, so both sides
+--   (and everyone listening) end up the same.
 
-local pending = {} -- requester -> since, while we're waiting to answer them
-local MARGIN = 600 -- ask from a bit before the last sync, in case clocks or a message lagged
+local pending = {} -- requester -> { since =, have = { [id] = rev } }, while we're waiting to answer them
+local manifests = {} -- sender -> { [id] = rev }, the "M" lines of a sync request being read
+local MARGIN = 600 -- profession/recipe catch-up starts a bit before the last sync, in case clocks or a message lagged
+local DIGEST_EVERY = 600
+local DIGEST_JITTER = 120
+local RESYNC_GAP = 300 -- we ask for a sync because of a fingerprint at most this often
+local lastSyncAsk = 0
+local lastSyncSeen = 0
+local resyncPending = false
+
+-- "count:hash" over every order's id and revision.
+function D.OrdersDigest()
+	local keys = {}
+	for id, o in pairs(orders() or {}) do
+		keys[#keys + 1] = id .. "=" .. (o.rev or 0) .. (o.crafter or "")
+	end
+	table.sort(keys)
+	local h = 5381
+	for _, k in ipairs(keys) do
+		for i = 1, #k do
+			h = (h * 33 + k:byte(i)) % 4294967291
+		end
+	end
+	return ("%d:%x"):format(#keys, h)
+end
 
 -- full: ask for everything, not just what changed.
 function D.RequestSync(full)
@@ -294,19 +326,45 @@ function D.RequestSync(full)
 	if not full and data.lastSync then
 		since = math.max(0, data.lastSync - MARGIN)
 	end
-	D.Send("S", since)
+	lastSyncAsk = D.Now()
+	local lines = {}
+	if not full then
+		for id, o in pairs(orders() or {}) do
+			lines[#lines + 1] = D.Pack("M", id, o.rev or 0)
+		end
+	end
+	lines[#lines + 1] = D.Pack("S", since, full and "full" or "list")
+	D.SendTogether(lines)
 end
 
+D.Handle("M", function(f, sender)
+	if f[2] and f[2] ~= "" then
+		manifests[sender] = manifests[sender] or {}
+		manifests[sender][f[2]] = tonumber(f[3]) or 0
+	end
+end)
+
 local function answer(requester)
-	local since = pending[requester]
-	if not since then
+	local req = pending[requester]
+	if not req then
 		return
 	end
 	pending[requester] = nil
+	local since, have = req.since, req.have
 	D.Send("D", requester)
-	for _, o in pairs(orders() or {}) do
-		if (o.updated or o.created or 0) > since then
+	local mine = orders() or {}
+	for id, o in pairs(mine) do
+		local theirs = have and have[id]
+		if not have or not theirs or theirs < (o.rev or 0) then
 			send("R", o, true)
+		end
+	end
+	if have then
+		for id, rev in pairs(have) do
+			local o = mine[id]
+			if not o or (o.rev or 0) < rev then
+				D.SendBulk("W", requester, id)
+			end
 		end
 	end
 	local data = D.Data()
@@ -316,15 +374,25 @@ local function answer(requester)
 	for name in pairs(data and data.recipes or {}) do
 		D.SendRecipes(name, since)
 	end
+	D.FlushBulk()
 end
 D._answerSync = answer
 
 D.Handle("S", function(f, sender)
+	lastSyncSeen = D.Now()
+	local have = manifests[sender]
+	manifests[sender] = nil
 	if not orders() then
 		return
 	end
 	local since = tonumber(f[2]) or 0
-	pending[sender] = math.min(pending[sender] or since, since)
+	if f[3] ~= "list" then
+		have = nil -- an older client, or /pfg sync: send everything
+	elseif not have then
+		have = {} -- they have no orders at all
+	end
+	local old = pending[sender]
+	pending[sender] = { since = math.min(old and old.since or since, since), have = have }
 	local wait = 1 + math.random() * 4
 	if C_Timer then
 		C_Timer.After(wait, function()
@@ -344,6 +412,61 @@ D.Handle("D", function(f)
 		end
 	end
 end)
+
+-- W requester id: the requester has a newer copy of this order than the one
+-- answering; if that's us, share ours with everyone.
+local pushed = {}
+D.Handle("W", function(f)
+	if D.FullName(f[2]) ~= D.Me() or not f[3] then
+		return
+	end
+	local o = D.GetOrder(f[3])
+	if o and not pushed[f[3]] then
+		pushed[f[3]] = true
+		send("R", o, true)
+		if C_Timer then
+			C_Timer.After(5, function()
+				pushed[f[3]] = nil
+			end)
+		end
+	end
+end)
+
+-- Fingerprints ----------------------------------------------------------------------
+
+function D.SendDigest()
+	if orders() then
+		D.SendBulk("HD", D.OrdersDigest())
+	end
+end
+
+D.Handle("HD", function(f)
+	if not orders() or not f[2] or f[2] == D.OrdersDigest() then
+		return
+	end
+	local now = D.Now()
+	if resyncPending or now - lastSyncAsk < RESYNC_GAP then
+		return
+	end
+	-- Wait a moment: if someone else asks for a sync first, that settles it.
+	resyncPending = true
+	local asked = lastSyncSeen
+	if C_Timer then
+		C_Timer.After(2 + math.random() * 8, function()
+			resyncPending = false
+			if lastSyncSeen == asked and f[2] ~= D.OrdersDigest() then
+				D.RequestSync()
+			end
+		end)
+	end
+end)
+
+local function digestLoop()
+	D.SendDigest()
+	if C_Timer then
+		C_Timer.After(DIGEST_EVERY + math.random() * DIGEST_JITTER, digestLoop)
+	end
+end
 
 function D.PruneOrders()
 	local all = orders()
@@ -366,6 +489,10 @@ D.On("GUILD", function(member)
 			D.PruneOrders()
 			D.RequestSync()
 		end)
+		if not D._digestLoop then
+			D._digestLoop = true
+			C_Timer.After(40 + math.random() * 20, digestLoop)
+		end
 	end
 end)
 

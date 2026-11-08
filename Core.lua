@@ -7,7 +7,7 @@ PidgesForeverGuild = PidgesForeverGuild or {}
 local D = PidgesForeverGuild
 ns.D = D
 
-D.PREFIX = "PidgesForever" -- addon message prefix (16 characters at most)
+D.PREFIX = "PidgesForever2" -- addon message prefix (16 characters at most)
 D.TITLE = "Pidge's Forever Guild AddOn"
 D.COLOR = "|cff9b7bff"
 D.MEDIA = "Interface\\AddOns\\" .. ADDON .. "\\media\\"
@@ -215,16 +215,32 @@ function D.Fire(event, ...)
 end
 
 -- Guild addon messages --------------------------------------------------------
--- Messages are tab-separated fields; the first is the message type. They go
--- out through a small queue so a burst (like a sync) stays under the server's
--- addon message limits.
+-- Messages are tab-separated fields; the first is the message type.
+--
+-- They travel through AceComm and ChatThrottleLib (the same pair CraftBoard
+-- and most big addons use): ChatThrottleLib shares out the server's addon
+-- bandwidth by bytes rather than by message, so small messages go out many per
+-- second instead of one, and AceComm splits anything longer than one addon
+-- message and joins it back together on the other side.
+--
+-- * Live changes (a new order, an accept, the guild's settings) go on their own
+--   at ALERT priority, so they're out in a fraction of a second.
+-- * Bulk traffic (sync answers) is gathered for a moment and sent as one
+--   compressed batch at BULK priority, so a sync of hundreds of orders is a
+--   handful of addon messages instead of hundreds, and never holds up a click.
+--
+-- On the wire: "1" + one message, or "Z" + a LibDeflate-compressed batch of
+-- messages, one per line.
 
 local SEP = "\t"
--- Two queues: live changes (a new order, an accept, the guild's links) always
--- go before bulk catch-up traffic (sync answers), so a big sync never holds
--- up what someone just clicked.
-local live, bulk = {}, {}
-local tokens, MAX_TOKENS, REFILL = 6, 6, 1.0 -- burst of 6, then 1 per second
+local LibStub = _G.LibStub
+local AceComm = LibStub and LibStub("AceComm-3.0", true)
+local Deflate = LibStub and LibStub("LibDeflate", true)
+D.OLD_PREFIX = "PidgesForever" -- v1.2.4 and older, kept only to tell them to update
+
+local MAX_BATCH = 3000 -- bytes of messages per compressed batch
+local MAX_INFLATED = 131072 -- refuse batches that unpack bigger than this
+local MAX_LINES = 1500
 
 function D.Escape(s)
 	s = tostring(s or "")
@@ -247,66 +263,134 @@ function D.Unpack(msg)
 	return out
 end
 
--- Returns false if the client says we're sending too fast (modern clients
--- drop the message and report it rather than queueing it).
-local function rawSend(item)
-	local result
-	local channel = item.target and "WHISPER" or "GUILD"
-	if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-		result = C_ChatInfo.SendAddonMessage(D.PREFIX, item.msg, channel, item.target)
-	elseif SendAddonMessage then
-		result = SendAddonMessage(D.PREFIX, item.msg, channel, item.target)
-	end
-	local codes = Enum and Enum.SendAddonMessageResult
-	if type(result) == "number" and codes then
-		return result ~= codes.AddonMessageThrottle and result ~= codes.ChannelThrottle and result ~= codes.GeneralError
-	end
-	return true
+local ace = {}
+if AceComm then
+	AceComm:Embed(ace)
 end
 
-local function enqueue(q, target, ...)
+local function wire(prio, channel, target, text)
+	if ace.SendCommMessage then
+		ace:SendCommMessage(D.PREFIX, text, channel, target, prio)
+	elseif C_ChatInfo and C_ChatInfo.SendAddonMessage and #text <= 255 then
+		C_ChatInfo.SendAddonMessage(D.PREFIX, text, channel, target)
+	end
+end
+
+-- Lines -> "Z"..compressed (or nil if the libraries are missing).
+local function packBatch(lines)
+	if not Deflate then
+		return nil
+	end
+	local comp = Deflate:CompressDeflate(table.concat(lines, "\n"))
+	return comp and ("Z" .. Deflate:EncodeForWoWAddonChannel(comp))
+end
+
+-- Wire text -> list of messages (each a tab-separated string), or nil.
+local function unpackWire(text)
+	local kind, body = text:sub(1, 1), text:sub(2)
+	if kind == "1" then
+		return { body }
+	elseif kind == "Z" and Deflate then
+		local comp = Deflate:DecodeForWoWAddonChannel(body)
+		local raw = comp and Deflate:DecompressDeflate(comp)
+		if type(raw) ~= "string" or #raw > MAX_INFLATED then
+			return nil
+		end
+		local lines = {}
+		for line in (raw .. "\n"):gmatch("(.-)\n") do
+			if #lines >= MAX_LINES then
+				break
+			end
+			if line ~= "" then
+				lines[#lines + 1] = line
+			end
+		end
+		return lines
+	end
+end
+D._unpackWire = unpackWire
+D._packBatch = packBatch
+
+local batch, batchBytes, batchTimer = {}, 0, false
+
+local function flushBatch()
+	batchTimer = false
+	if #batch == 0 then
+		return
+	end
+	local lines = batch
+	batch, batchBytes = {}, 0
 	if not D.InGuild() then
 		return
 	end
-	local msg = D.Pack(...)
-	if #msg > 250 then
-		msg = msg:sub(1, 250)
+	local text = packBatch(lines)
+	if text then
+		wire("BULK", "GUILD", nil, text)
+	else
+		for _, line in ipairs(lines) do
+			wire("BULK", "GUILD", nil, "1" .. line)
+		end
 	end
-	q[#q + 1] = { msg = msg, target = target }
 end
+D.FlushBulk = flushBatch
 
--- A live change: sent as soon as the rate limit allows.
+local batcher = CreateFrame("Frame")
+batcher:SetScript("OnUpdate", function(_, elapsed)
+	if batchTimer then
+		batchTimer = batchTimer - elapsed
+		if batchTimer <= 0 then
+			flushBatch()
+		end
+	end
+end)
+
+-- A live change: out right away.
 function D.Send(...)
-	enqueue(live, nil, ...)
+	if D.InGuild() then
+		wire("ALERT", "GUILD", nil, "1" .. D.Pack(...))
+	end
 end
 
--- Catch-up traffic: sent when nothing live is waiting.
+-- Catch-up traffic: batched, compressed and sent when nothing live is waiting.
 function D.SendBulk(...)
-	enqueue(bulk, nil, ...)
+	if not D.InGuild() then
+		return
+	end
+	local line = D.Pack(...)
+	batch[#batch + 1] = line
+	batchBytes = batchBytes + #line + 1
+	if batchBytes >= MAX_BATCH then
+		flushBatch()
+	elseif not batchTimer then
+		batchTimer = 0.2 -- seconds to wait for more before sending
+	end
+end
+
+-- Several messages that belong together (like a sync request and its list)
+-- as one compressed message.
+function D.SendTogether(lines)
+	if not D.InGuild() or #lines == 0 then
+		return
+	end
+	wire("NORMAL", "GUILD", nil, packBatch(lines) or ("1" .. lines[1]))
 end
 
 -- To one player (any guild), e.g. asking another guild for its colors.
 function D.SendWhisper(target, ...)
-	enqueue(live, target, ...)
+	wire("NORMAL", "WHISPER", target, "1" .. D.Pack(...))
+end
+
+-- The old protocol, for one plain message older versions understand.
+function D.SendOld(...)
+	if D.InGuild() and C_ChatInfo and C_ChatInfo.SendAddonMessage then
+		pcall(C_ChatInfo.SendAddonMessage, D.OLD_PREFIX, D.Pack(...), "GUILD")
+	end
 end
 
 function D.QueueSizes()
-	return #live, #bulk
+	local ctl = _G.ChatThrottleLib
+	return 0, #batch + ((ctl and ctl.bQueueing) and 1 or 0)
 end
-
-local comm = CreateFrame("Frame")
-comm:SetScript("OnUpdate", function(_, elapsed)
-	tokens = math.min(MAX_TOKENS, tokens + elapsed / REFILL)
-	while tokens >= 1 and (#live > 0 or #bulk > 0) do
-		tokens = tokens - 1
-		local q = #live > 0 and live or bulk
-		if rawSend(q[1]) then
-			table.remove(q, 1)
-		else
-			tokens = -1 -- throttled: keep the message and back off a moment
-		end
-	end
-end)
 
 local handlers, whisperHandlers = {}, {}
 
@@ -330,6 +414,7 @@ function D.RegisterEvents(frame, ...)
 	end
 end
 
+local comm = CreateFrame("Frame")
 D.RegisterEvents(comm, "CHAT_MSG_ADDON", "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_GUILD_UPDATE", "GUILD_ROSTER_UPDATE")
 
 local lastGuild = nil
@@ -374,41 +459,58 @@ comm:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
 		checkGuild()
 	elseif event == "PLAYER_GUILD_UPDATE" or event == "GUILD_ROSTER_UPDATE" then
 		checkGuild()
-	elseif event == "CHAT_MSG_ADDON" then
-		local prefix, msg, channel, sender = a1, a2, a3, a4
-		if prefix ~= D.PREFIX or not sender or not D.InGuild() then
-			return
-		end
-		sender = D.FullName(sender)
-		local fields = D.Unpack(msg)
-		if channel == "WHISPER" then
-			local fn = whisperHandlers[fields[1]]
-			if fn then
-				pcall(fn, fields, sender)
-			end
-			return
-		elseif channel ~= "GUILD" then
-			return
-		end
-		if fields[1] == "H" and helloNonce and fields[2] == helloNonce then
-			helloNonce = nil
-			if sender ~= myName then
-				learnMyName(sender)
-			end
-			return
-		end
-		if sender == D.Me() then
-			return
-		end
-		local fn = handlers[fields[1]]
-		if fn then
-			local ok, err = pcall(fn, fields, sender)
-			if not ok and D.debug then
-				D.print("bad message from " .. sender .. ": " .. tostring(err))
-			end
-		end
+	elseif event == "CHAT_MSG_ADDON" and not ace.SendCommMessage then
+		D._onWire(a1, a2, a3, a4)
 	end
 end)
+
+local function dispatch(msg, channel, sender)
+	local fields = D.Unpack(msg)
+	if channel == "WHISPER" then
+		local fn = whisperHandlers[fields[1]]
+		if fn then
+			pcall(fn, fields, sender)
+		end
+		return
+	elseif channel ~= "GUILD" then
+		return
+	end
+	if fields[1] == "H" and helloNonce and fields[2] == helloNonce then
+		helloNonce = nil
+		if sender ~= myName then
+			learnMyName(sender)
+		end
+		return
+	end
+	if sender == D.Me() then
+		return
+	end
+	local fn = handlers[fields[1]]
+	if fn then
+		local ok, err = pcall(fn, fields, sender)
+		if not ok and D.debug then
+			D.print("bad message from " .. sender .. ": " .. tostring(err))
+		end
+	end
+end
+
+-- A whole message from AceComm (already joined back together).
+function D._onWire(prefix, text, channel, sender)
+	if prefix ~= D.PREFIX or type(text) ~= "string" or not sender or not D.InGuild() then
+		return
+	end
+	sender = D.FullName(sender)
+	local lines = unpackWire(text)
+	for _, msg in ipairs(lines or {}) do
+		dispatch(msg, channel, sender)
+	end
+end
+
+if ace.RegisterComm then
+	ace:RegisterComm(D.PREFIX, function(prefix, text, channel, sender)
+		D._onWire(prefix, text, channel, sender)
+	end)
+end
 
 -- Guild panel -------------------------------------------------------------------
 -- Blizzard_Communities (the guild panel) loads the first time it's opened.
