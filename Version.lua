@@ -1,5 +1,5 @@
--- Pidge's Forever Guild: the addon's version. It shows next to "Info" on the
--- guild panel's Info tab, and guildmates' addons tell each other theirs ("V"),
+-- Pidge's Forever Guild: the addon's version. It shows on the guild panel's
+-- Info tab, just left of the link buttons, and guildmates' addons tell each other theirs ("V"),
 -- so anyone on an older version gets a note in chat to update.
 
 local ADDON, ns = ...
@@ -55,6 +55,12 @@ local function update()
 	end
 	label:SetText(text)
 	label:SetShown(D.InGuild())
+	label:ClearAllPoints()
+	if D.leftmostButton and D.leftmostButton:IsShown() then
+		label:SetPoint("RIGHT", D.leftmostButton, "LEFT", -6, 0)
+	elseif label:GetParent().TitleText then
+		label:SetPoint("LEFT", label:GetParent().TitleText, "RIGHT", 8, 0)
+	end
 end
 
 D.OnGuildPanel(function()
@@ -63,11 +69,7 @@ D.OnGuildPanel(function()
 		return
 	end
 	label = info:CreateFontString("PFGVersionText", "OVERLAY", "GameFontHighlightSmall")
-	if info.TitleText then
-		label:SetPoint("LEFT", info.TitleText, "RIGHT", 8, 0)
-	else
-		label:SetPoint("TOPLEFT", info, "TOPLEFT", 60, 20)
-	end
+	label:SetJustifyH("RIGHT")
 	D._versionLabel = label
 	update()
 	info:HookScript("OnShow", update)
@@ -75,6 +77,7 @@ end)
 
 D.On("GUILD", update)
 D.On("VERSION", update)
+D.On("BUTTONS_PLACED", update)
 
 D.Command({ "version", "v" }, function()
 	D.print("version " .. D.VERSION .. (D.CompareVersions(D.newestVersion, D.VERSION) > 0 and (" (" .. D.newestVersion .. " is out)") or ""))

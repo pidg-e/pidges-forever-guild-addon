@@ -210,6 +210,9 @@ local function placeButtons()
 		shown[i]:ClearAllPoints()
 		shown[i]:SetPoint("RIGHT", shown[i - 1], "LEFT", -GAP, 0)
 	end
+	-- The version text sits just left of the leftmost button.
+	D.leftmostButton = shown[#shown]
+	D.Fire("BUTTONS_PLACED")
 end
 D._placeButtons = placeButtons
 
