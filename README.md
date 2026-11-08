@@ -43,10 +43,12 @@ A **Wishlist** tab (note icon) just above Crafting Orders. List items you want
 or need (type a name or shift-click an item, with a quantity and a short note),
 and see what everyone else is after. **Guild Wishlist** lists the guild's
 members (those with something listed first, with how many items); click one to
-see their wishlist, and **Back** to return. **My Wishlist** is yours. Whisper
+show their wishlist beneath their name, and again to fold it away. **My Wishlist** is yours. Whisper
 someone from their wish (or right-click it),
 and remove your own when you've got it. Officers can remove anyone's. Up to 30
-wishes each; it syncs between guildmates just like the orders.
+wishes each; it syncs between guildmates just like the orders. Item
+suggestions leave out things nobody can get (NPC weapons like "Monster - 2H
+Axe", PvP and test placeholders).
 
 ### Members' professions
 

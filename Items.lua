@@ -524,6 +524,26 @@ end
 
 -- Searching --------------------------------------------------------------------------
 
+-- Items that exist in the game files but can't be had: NPC weapons
+-- ("Monster - 2H Axe"), test and placeholder items, old copies, and the like.
+local JUNK = {
+	"^monster ?%-", "pvp", "^test%f[%W]", "%f[%w]test%f[%W]",  "^%[ph%]", "%[ph%]", "placeholder",
+	"deprecated", "^old ", "[%(%[]old[%)%]]", "^unused", "unused$", "^zz", "^qa ", "%f[%w]dnd%f[%W]", "^npc ",
+	"^nas ", "debug", "^%[?dep%]? ", "^tmp", "^copy of",
+}
+function D.IsObtainable(name)
+	local lower = (name or ""):lower()
+	if lower == "" then
+		return false
+	end
+	for _, pat in ipairs(JUNK) do
+		if lower:find(pat) then
+			return false
+		end
+	end
+	return true
+end
+
 -- Craftable items whose names contain `text`, best first: things the guild
 -- can craft, then names that start with it, then the rest.
 -- any: every item we know of, not only craftable ones (for the wishlist).
@@ -545,7 +565,7 @@ function D.SearchItems(text, limit, any)
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
 		local at = (any or craftable[id]) and name:lower():find(text, 1, true)
-		if at then
+		if at and D.IsObtainable(name) then
 			out[#out + 1] = { id = id, name = name, craft = makeable[id] or false, prefix = at == 1 }
 		end
 	end
@@ -575,7 +595,7 @@ function D.FindItem(text, any)
 	end
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
-		if (any or craftable[id]) and name:lower() == text then
+		if (any or craftable[id]) and name:lower() == text and D.IsObtainable(name) then
 			return id, name
 		end
 	end

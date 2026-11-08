@@ -11,8 +11,9 @@ local TAB_ICON = "Interface\\Icons\\INV_Misc_Note_01"
 local SUGGESTIONS = 6
 
 local panel, tab, form
--- filter "all" lists the guild's members; member = whose wishlist we opened.
-local state = { filter = "all", member = nil, offset = 0 }
+-- filter "all" lists the guild's members; expanded = whose wishlist is open
+-- beneath their name.
+local state = { filter = "all", expanded = nil, offset = 0 }
 
 local FILTERS = {
 	{ key = "all", label = "Guild Wishlist", width = 110 },
@@ -38,6 +39,7 @@ end
 
 local function createRow(parent, i)
 	local r = CreateFrame("Button", nil, parent)
+	r.index = i
 	r:SetHeight(ROW_H)
 	r:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
 	r:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
@@ -70,7 +72,7 @@ local function createRow(parent, i)
 	r.button:SetPoint("RIGHT", r, "RIGHT", -6, 0)
 	r.button:SetScript("OnClick", function()
 		if r.member then
-			D.OpenMemberWishlist(r.member.name)
+			D.ToggleMemberWishlist(r.member.name)
 			return
 		end
 		local w = r.wish
@@ -108,7 +110,7 @@ local function createRow(parent, i)
 			if button == "RightButton" and self.member.name ~= D.Me() then
 				D._whisper(self.member.name)
 			else
-				D.OpenMemberWishlist(self.member.name)
+				D.ToggleMemberWishlist(self.member.name)
 			end
 			return
 		end
@@ -128,7 +130,9 @@ local function createRow(parent, i)
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 			GameTooltip:SetText(D.Short(m.name))
 			GameTooltip:AddLine(m.count == 1 and "1 item on their wishlist" or (m.count .. " items on their wishlist"), 1, 1, 1)
-			GameTooltip:AddLine("Click to see their wishlist.", 0.6, 0.6, 0.6)
+			if m.count > 0 then
+				GameTooltip:AddLine(state.expanded == m.name and "Click to hide their wishlist." or "Click to show their wishlist.", 0.6, 0.6, 0.6)
+			end
 			GameTooltip:Show()
 			return
 		end
@@ -158,8 +162,17 @@ end
 
 local CLASS_ICONS = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
 
+-- Wish rows under a member are indented.
+local function indent(r, nested)
+	r.icon:ClearAllPoints()
+	r.icon:SetPoint("LEFT", nested and 34 or 6, 0)
+	r.bg:SetColorTexture(1, 1, 1, nested and 0.015 or (r.index % 2 == 0 and 0.03 or 0.06))
+end
+
 local function fillMemberRow(r, m)
 	r.wish, r.member, r.link = nil, m, nil
+	indent(r, false)
+	local open = state.expanded == m.name
 	local coords = m.class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[m.class]
 	if coords then
 		r.icon:SetTexture(CLASS_ICONS)
@@ -170,7 +183,8 @@ local function fillMemberRow(r, m)
 	end
 	local color = m.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[m.class]
 	local hex = color and color.colorStr or "ffffffff"
-	r.title:SetText("|c" .. hex .. D.Short(m.name) .. "|r" .. (m.name == D.Me() and " |cff999999(you)|r" or ""))
+	local arrow = m.count == 0 and "    " or (open and "|cffffd100-|r  " or "|cffffd100+|r  ")
+	r.title:SetText(arrow .. "|c" .. hex .. D.Short(m.name) .. "|r" .. (m.name == D.Me() and " |cff999999(you)|r" or ""))
 	local bits = {}
 	if m.rank and m.rank ~= "" then
 		bits[#bits + 1] = m.rank
@@ -181,7 +195,7 @@ local function fillMemberRow(r, m)
 	bits[#bits + 1] = m.count == 0 and "|cff999999nothing listed|r"
 		or ("|cffffd100" .. (m.count == 1 and "1 item" or (m.count .. " items")) .. "|r")
 	r.sub:SetText(table.concat(bits, " - "))
-	r.button:SetText("View")
+	r.button:SetText(open and "Hide" or "Show")
 	r.button:SetShown(m.count > 0)
 	r.remove:Hide()
 	r:SetAlpha(m.count > 0 and 1 or 0.6)
@@ -241,13 +255,16 @@ function D.WishlistMembers()
 	return list
 end
 
-function D.OpenMemberWishlist(name)
-	state.filter, state.member, state.offset = "all", name, 0
+-- Show (or hide again) a member's wishlist beneath their name.
+function D.ToggleMemberWishlist(name)
+	state.filter = "all"
+	state.expanded = state.expanded ~= name and name or nil
 	D.ShowWishForm(false)
 end
 
-local function fillRow(r, w)
+local function fillRow(r, w, nested)
 	r.member = nil
+	indent(r, nested)
 	r:SetAlpha(1)
 	r.icon:SetTexCoord(0, 1, 0, 1)
 	r.button:Show()
@@ -277,7 +294,17 @@ local function visibleWishes()
 	if state.filter == "mine" then
 		return D.Wishes(D.Me())
 	end
-	return D.Wishes(state.member)
+	-- The guild's members, with the open one's wishes beneath them.
+	local out = {}
+	for _, m in ipairs(D.WishlistMembers()) do
+		out[#out + 1] = { member = m }
+		if state.expanded == m.name then
+			for _, w in ipairs(D.Wishes(m.name)) do
+				out[#out + 1] = { wish = w }
+			end
+		end
+	end
+	return out
 end
 D._visibleWishes = visibleWishes
 
@@ -292,10 +319,8 @@ function D.RefreshWishlist()
 			b:UnlockHighlight()
 		end
 	end
-	local members = state.filter == "all" and not state.member
-	local list = members and D.WishlistMembers() or visibleWishes()
-	panel.backButton:SetShown(state.member ~= nil)
-	panel.memberLabel:SetText(state.member and (D.Short(state.member) .. "'s wishlist") or "")
+	local members = state.filter == "all"
+	local list = visibleWishes()
 	local h = panel.list:GetHeight() or 0
 	local fit = math.max(1, math.min(#panel.rows, math.floor(h / ROW_H)))
 	if h <= 0 then
@@ -305,10 +330,12 @@ function D.RefreshWishlist()
 	state.offset = math.min(math.max(0, state.offset), maxOffset)
 	for i, r in ipairs(panel.rows) do
 		local item = i <= fit and list[state.offset + i]
-		if item and members then
-			fillMemberRow(r, item)
+		if item and item.member then
+			fillMemberRow(r, item.member)
+		elseif item and item.wish then
+			fillRow(r, item.wish, true)
 		elseif item then
-			fillRow(r, item)
+			fillRow(r, item, false)
 		else
 			r.wish, r.member = nil, nil
 			r:Hide()
@@ -321,14 +348,17 @@ function D.RefreshWishlist()
 	panel.scrollBar:SetShown(maxOffset > 0)
 	if #list == 0 then
 		panel.empty:SetText(state.filter == "mine" and "Your wishlist is empty. Click Add Item to list something you want."
-			or members and "No guild members to show yet."
-			or (D.Short(state.member) .. " has nothing on their wishlist."))
+			or "No guild members to show yet.")
 		panel.empty:Show()
 	else
 		panel.empty:Hide()
 	end
 	if members then
-		panel.count:SetText(#list == 1 and "1 member" or (#list .. " members"))
+		local n = 0
+		for _, e in ipairs(list) do
+			n = n + (e.member and 1 or 0)
+		end
+		panel.count:SetText(n == 1 and "1 member" or (n .. " members"))
 	else
 		panel.count:SetText(#list == 1 and "1 item" or (#list .. " items"))
 	end
@@ -609,26 +639,12 @@ local function createPanel()
 		b:SetText(flt.label)
 		b.key = flt.key
 		b:SetScript("OnClick", function()
-			state.filter, state.member, state.offset = flt.key, nil, 0
+			state.filter, state.offset = flt.key, 0
 			D.ShowWishForm(false)
 		end)
 		p.filterButtons[i] = b
 		prev = b
 	end
-
-	-- In a member's wishlist: whose it is, and a way back to the members.
-	p.backButton = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-	p.backButton:SetSize(70, 22)
-	p.backButton:SetPoint("RIGHT", header, "RIGHT", -6, 0)
-	p.backButton:SetText("Back")
-	p.backButton:SetScript("OnClick", function()
-		state.member, state.offset = nil, 0
-		D.RefreshWishlist()
-	end)
-	p.backButton:Hide()
-	p.memberLabel = p:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-	p.memberLabel:SetPoint("RIGHT", p.backButton, "LEFT", -10, 0)
-	p.memberLabel:SetJustifyH("RIGHT")
 
 	p.list = CreateFrame("Frame", nil, p)
 	p.list:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 5, -8)

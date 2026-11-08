@@ -2,7 +2,7 @@
 ## Title: |cff9b7bffPidge's Forever Guild|r
 ## Notes: Guild tools for any guild on WoW Forever: crafting orders, members' professions, and your guild's Discord and Warcraft Logs links.
 ## Author: Pidge
-## Version: 1.4.1
+## Version: 1.4.2
 ## SavedVariables: PidgesForeverGuildDB
 ## IconTexture: Interface\AddOns\PidgesForeverGuild\media\github
 
