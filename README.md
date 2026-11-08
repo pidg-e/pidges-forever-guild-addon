@@ -22,10 +22,14 @@ A **Crafting Orders** tab (anvil icon) under the guild panel's side tabs.
   new order for the selected recipe's item, with its profession filled in.
 * Orders are always for a real item, shown like an item link: hover a row
   (or the icon in the form) to see the item's tooltip.
-* **Open** lists everyone's open orders; **Accept** one to craft it.
+* **Open** lists everyone's open orders; **Accept** one to craft it. Orders
+  someone already took stay listed, greyed out and marked "Taken by" them.
 * **My Orders** are yours: **Cancel**, or **Received** once you have it.
 * **My Crafts** are the ones you accepted: **Done** when it's handed over,
-  or **Give Back** to reopen it.
+  or **Give Back** to reopen it. At a mailbox, the letter button fills in
+  the mail for you: the requester, a subject, the crafted items from your
+  bags, and a C.O.D. for the tip. Check it and press Send.
+* The tip is entered in gold, silver and copper.
 * **History** keeps finished and cancelled orders for two weeks.
 * Filter by profession, hover a row for the item and note, right-click to
   whisper the other person. You get a chat message when someone accepts or
