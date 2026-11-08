@@ -81,6 +81,39 @@ local function freeAttachment()
 	end
 end
 
+-- An empty slot in a normal bag (not a profession bag): bag, slot.
+local function emptyBagSlot()
+	for bag = 0, (NUM_BAG_SLOTS or 4) do
+		local free, family = 0, 0
+		if C.GetContainerNumFreeSlots then
+			free, family = C.GetContainerNumFreeSlots(bag)
+		elseif GetContainerNumFreeSlots then
+			free, family = GetContainerNumFreeSlots(bag)
+		end
+		if (family or 0) == 0 then
+			for slot = 1, (numSlots and numSlots(bag)) or 0 do
+				if not slotInfo(bag, slot) then
+					return bag, slot
+				end
+			end
+		end
+	end
+end
+
+local function setCOD(copper)
+	if SendMailRadioButton_OnClick then
+		SendMailRadioButton_OnClick(2)
+	elseif SendMailCODButton then
+		SendMailCODButton:SetChecked(true)
+		if SendMailSendMoneyButton then
+			SendMailSendMoneyButton:SetChecked(false)
+		end
+	end
+	if MoneyInputFrame_SetCopper and SendMailMoney then
+		MoneyInputFrame_SetCopper(SendMailMoney, copper)
+	end
+end
+
 -- Fill in the Send Mail tab for this order. Returns true, or false and why.
 function D.MailOrder(o)
 	if not (MailFrame and MailFrame:IsShown()) then
@@ -102,62 +135,102 @@ function D.MailOrder(o)
 		SendMailSubjectEditBox:SetText(("Crafting order: %s%s"):format(item, o.qty > 1 and (" x" .. o.qty) or ""))
 	end
 
-	-- The items: whole stacks while they fit, then split the last one.
-	local need, attached, missing = o.qty or 1, 0, nil
+	-- The items, exactly o.qty of them. Stacks that fit go in whole. The game
+	-- attaches a whole bag slot even when the cursor holds part of it, so the
+	-- remainder is split into an empty bag slot first and attached from there
+	-- once it has landed.
+	local need, attached = o.qty or 1, 0
+	local splitFrom, splitCount
 	if o.itemID and o.itemID > 0 then
 		for _, s in ipairs(findInBags(o.itemID)) do
 			if need <= 0 then
 				break
 			end
-			local slot = freeAttachment()
-			if not slot then
-				break
+			if s.count <= need then
+				local slot = freeAttachment()
+				if not slot then
+					break
+				end
+				if ClearCursor then
+					ClearCursor()
+				end
+				pickup(s.bag, s.slot)
+				ClickSendMailItemButton(slot)
+				attached = attached + 1
+				need = need - s.count
+			elseif not splitFrom then
+				splitFrom, splitCount = s, need
+				need = 0
 			end
+		end
+	end
+
+	local function finish(missing)
+		if attached > 0 and (o.tip or 0) > 0 then
+			setCOD(o.tip)
+		end
+		if SendMailFrame_Update then
+			SendMailFrame_Update()
+		end
+		if attached == 0 then
+			return false, "You don't have the crafted item in your bags. The recipient and subject are filled in."
+		elseif missing and missing > 0 then
+			return false, ("Attached what you have; %d more still to go."):format(missing)
+		end
+		if o.status == S.ACCEPTED then
+			pending = { id = o.id, name = recipient }
+		end
+		D.print("mail filled in" .. ((o.tip or 0) > 0 and ", with a C.O.D. for the tip" or "") .. ". Check it and press Send; the order is marked done once it's sent.")
+		return true
+	end
+
+	if not splitFrom then
+		return finish(need)
+	end
+	local slot = freeAttachment()
+	local bag, empty = emptyBagSlot()
+	if not slot then
+		return finish(splitCount)
+	elseif not bag then
+		finish(splitCount)
+		return false, ("Free up one bag slot so I can split off the last %d, then click the mail button again."):format(splitCount)
+	end
+	if ClearCursor then
+		ClearCursor()
+	end
+	split(splitFrom.bag, splitFrom.slot, splitCount)
+	pickup(bag, empty)
+	-- Wait for the split stack to land, then attach it.
+	local tries = 0
+	local function attachSplit()
+		tries = tries + 1
+		local id, count, locked = slotInfo(bag, empty)
+		if id == o.itemID and count == splitCount and not locked and MailFrame:IsShown() then
 			if ClearCursor then
 				ClearCursor()
 			end
-			if s.count <= need then
-				pickup(s.bag, s.slot)
-				need = need - s.count
-			else
-				split(s.bag, s.slot, need)
-				need = 0
-			end
-			ClickSendMailItemButton(slot)
+			pickup(bag, empty)
+			ClickSendMailItemButton(freeAttachment() or slot)
 			attached = attached + 1
-		end
-		if need > 0 then
-			missing = need
-		end
-	end
-
-	-- C.O.D. for the tip (C.O.D. needs at least one item attached).
-	if (o.tip or 0) > 0 and attached > 0 then
-		if SendMailRadioButton_OnClick then
-			SendMailRadioButton_OnClick(2)
-		elseif SendMailCODButton then
-			SendMailCODButton:SetChecked(true)
-			if SendMailSendMoneyButton then
-				SendMailSendMoneyButton:SetChecked(false)
+			local ok, err = finish(0)
+			if not ok and err then
+				D.print(err)
 			end
+		elseif tries < 30 and C_Timer then
+			C_Timer.After(0.1, attachSplit)
+		else
+			if ClearCursor then
+				ClearCursor()
+			end
+			finish(splitCount)
+			D.print(("Couldn't split off the last %d; add %s yourself."):format(splitCount, splitCount == 1 and "it" or "them"))
 		end
-		if MoneyInputFrame_SetCopper and SendMailMoney then
-			MoneyInputFrame_SetCopper(SendMailMoney, o.tip)
-		end
 	end
-	if SendMailFrame_Update then
-		SendMailFrame_Update()
+	if C_Timer then
+		C_Timer.After(0.1, attachSplit)
+	else
+		attachSplit()
 	end
-
-	if attached == 0 then
-		return false, "You don't have the crafted item in your bags. The recipient and subject are filled in."
-	elseif missing then
-		return false, ("Attached what you have; %d more still to go."):format(missing)
-	end
-	if o.status == S.ACCEPTED then
-		pending = { id = o.id, name = recipient }
-	end
-	D.print("mail filled in" .. ((o.tip or 0) > 0 and ", with a C.O.D. for the tip" or "") .. ". Check it and press Send; the order is marked done once it's sent.")
 	return true
 end
 
@@ -177,8 +250,9 @@ D._onSendMail = onSendMail
 local function onMailEvent(event)
 	if event == "MAIL_SEND_SUCCESS" then
 		local done = sending
-		sending, pending = nil, nil
+		sending = nil
 		if done then
+			pending = nil
 			local o = D.GetOrder(done.id)
 			if o and o.status == S.ACCEPTED and o.crafter == D.Me() then
 				D.CompleteOrder(done.id)
