@@ -66,6 +66,31 @@ who log in while you're offline get them from any guildmate who has them.
 Links straight from the Guild Master always win over a copy passed on by
 someone else, so members can't swap in their own.
 
+### Guild colors
+
+On the **Colors & Ranks** page of Pidge's Forever Settings, the Guild Master
+picks a color for the guild's name and for each rank (right-click a swatch to
+reset it to white), and ticks which ranks count as officers.
+
+* Player tooltips show the guild line as **Rank of <Guild>** in those colors.
+* In chat, the guild's name (with or without the angle brackets) shows in the
+  guild's color, in the default chat window and in chat addons such as Prat,
+  Chatter or Chattynator.
+* Other guilds' colors come from their own members, if they use the addon:
+  hovering one of them asks their addon quietly. Guilds without it stay white.
+
+### Officers
+
+Officers and up (the Guild Master and the ranks ticked as officers; by
+default the rank just below Guild Master) get an **X** on other members'
+open and in-progress orders to remove them. The requester is told who
+removed it.
+
+### Version
+
+The Info tab shows the addon's version next to "Info". Guildmates' addons
+compare versions, and anyone on an older one gets a note in chat to update.
+
 ### How guildmates share data
 
 Crafters share what their recipes make the first time they open each
@@ -84,7 +109,8 @@ online guildmate sends you everything you missed.
 * `/pfg items` shows how many items the order form can suggest.
 * `/pfg profs` shows what professions the addon can see.
 * `/pfg discord`, `/pfg logs`, `/pfg github` show the links.
-* `/pfg settings` (Guild Master) opens the link settings.
+* `/pfg settings` (Guild Master) opens the settings (links, colors, officers).
+* `/pfg version` shows which version you have.
 
 ## Install
 

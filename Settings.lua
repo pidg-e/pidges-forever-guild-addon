@@ -60,6 +60,60 @@ function D.Links()
 	return data and data.links or {}
 end
 
+-- Colors are "rrggbb" (nil = default white). ranks[i] / officers[i] are for
+-- rank index i - 1 (1 = Guild Master).
+local function encodeRanks(ranks)
+	local out = {}
+	for i = 1, 10 do
+		out[i] = ranks and ranks[i] or ""
+	end
+	return (table.concat(out, ","):gsub(",+$", ""))
+end
+
+local function decodeRanks(s)
+	local ranks, i = {}, 0
+	for v in ((s or "") .. ","):gmatch("(.-),") do
+		i = i + 1
+		if v:match("^%x%x%x%x%x%x$") then
+			ranks[i] = v:lower()
+		end
+	end
+	return ranks
+end
+
+local function encodeOfficers(officers)
+	if not officers then
+		return ""
+	end
+	local out = {}
+	for i = 1, 10 do
+		out[i] = (i == 1 or officers[i]) and "1" or "0"
+	end
+	return (table.concat(out):gsub("0+$", ""))
+end
+
+local function decodeOfficers(s)
+	if not s or s == "" then
+		return nil
+	end
+	local officers = {}
+	for i = 1, #s do
+		officers[i] = s:sub(i, i) == "1"
+	end
+	officers[1] = true
+	return officers
+end
+
+local function validColor(c)
+	return type(c) == "string" and c:match("^%x%x%x%x%x%x$") and c:lower() or nil
+end
+D.EncodeRanks, D.DecodeRanks, D.EncodeOfficers, D.DecodeOfficers = encodeRanks, decodeRanks, encodeOfficers, decodeOfficers
+
+-- Everything but the time, to tell whether anything changed.
+local function signature(l)
+	return table.concat({ l.discord or "", l.logs or "", l.color or "", encodeRanks(l.ranks), encodeOfficers(l.officers) }, "|")
+end
+
 local function store(links)
 	local data = D.Data()
 	if not data then
@@ -67,7 +121,7 @@ local function store(links)
 	end
 	local old = data.links or {}
 	data.links = links
-	if old.discord ~= links.discord or old.logs ~= links.logs then
+	if signature(old) ~= signature(links) then
 		D.Fire("LINKS")
 	end
 end
@@ -99,7 +153,7 @@ end
 local function sendLinks()
 	local l = D.Links()
 	if l.t then
-		D.Send("LS", l.t, l.discord or "", l.logs or "", l.gm and "1" or "0")
+		D.Send("LS", l.t, l.discord or "", l.logs or "", l.gm and "1" or "0", l.color or "", encodeRanks(l.ranks), encodeOfficers(l.officers))
 	end
 end
 
@@ -119,15 +173,24 @@ D.Handle("LS", function(f, sender)
 	if not t then
 		return
 	end
-	local discord, logs = opt(D.NormalizeDiscord(f[3] or "") or ""), opt(D.NormalizeLogs(f[4] or "") or "")
+	local new = {
+		discord = opt(D.NormalizeDiscord(f[3] or "") or ""),
+		logs = opt(D.NormalizeLogs(f[4] or "") or ""),
+		t = t,
+		color = validColor(f[6]),
+		ranks = decodeRanks(f[7]),
+		officers = decodeOfficers(f[8]),
+	}
 	local have = D.Links()
 	if D.IsGuildMaster(sender) then
-		if not have.gm or have.t ~= t or have.discord ~= discord or have.logs ~= logs then
-			store({ discord = discord, logs = logs, t = t, gm = true })
+		if not have.gm or have.t ~= t or signature(have) ~= signature(new) then
+			new.gm = true
+			store(new)
 		end
 	elseif not have.gm and (not have.t or t > have.t) then
 		-- Passed on by a guildmate: good enough until the Guild Master says otherwise.
-		store({ discord = discord, logs = logs, t = t, gm = false })
+		new.gm = false
+		store(new)
 	end
 end)
 
@@ -174,8 +237,9 @@ D.On("GUILD", function(member)
 	end
 end)
 
--- Save new links (Guild Master only). Returns true, or false and why not.
-function D.SaveLinks(discordText, logsText)
+-- Save new settings (Guild Master only). extra = { color, ranks, officers }
+-- (left out: keep what we have). Returns true, or false and why not.
+function D.SaveLinks(discordText, logsText, extra)
 	if not D.InGuild() or not IsGuildLeader() then
 		return false, "Only the Guild Master can change these."
 	end
@@ -187,7 +251,17 @@ function D.SaveLinks(discordText, logsText)
 	if not logs then
 		return false, "That doesn't look like a Warcraft Logs guild page (warcraftlogs.com/guild/...)."
 	end
-	store({ discord = opt(discord), logs = opt(logs), t = D.Now(), gm = true })
+	local have = D.Links()
+	extra = extra or have
+	store({
+		discord = opt(discord),
+		logs = opt(logs),
+		t = D.Now(),
+		gm = true,
+		color = validColor(extra.color),
+		ranks = extra.ranks,
+		officers = extra.officers,
+	})
 	sendLinks()
 	return true
 end
@@ -225,6 +299,66 @@ local function makeBox(parent, label, hint, anchor, y)
 	return box
 end
 
+local function hexToRGB(hex)
+	hex = hex or "ffffff"
+	return tonumber(hex:sub(1, 2), 16) / 255, tonumber(hex:sub(3, 4), 16) / 255, tonumber(hex:sub(5, 6), 16) / 255
+end
+
+local function rgbToHex(r, g, b)
+	local function c(v)
+		return math.max(0, math.min(255, math.floor(v * 255 + 0.5)))
+	end
+	return ("%02x%02x%02x"):format(c(r), c(g), c(b))
+end
+D.HexToRGB, D.RGBToHex = hexToRGB, rgbToHex
+
+-- Open WoW's color picker on `hex`; onChange(hex) as the color changes (and
+-- with the old color if cancelled).
+local function pickColor(hex, onChange)
+	local cp = ColorPickerFrame
+	if not cp then
+		return
+	end
+	local r, g, b = hexToRGB(hex)
+	local function apply()
+		onChange(rgbToHex(cp:GetColorRGB()))
+	end
+	local function cancel()
+		onChange(hex)
+	end
+	if cp.SetupColorPickerAndShow then
+		cp:SetupColorPickerAndShow({ r = r, g = g, b = b, hasOpacity = false, swatchFunc = apply, cancelFunc = cancel })
+	else
+		cp.func, cp.cancelFunc, cp.hasOpacity = apply, cancel, false
+		cp.previousValues = { r, g, b }
+		cp:SetColorRGB(r, g, b)
+		cp:Hide()
+		cp:Show()
+	end
+end
+D._pickColor = pickColor
+
+local function makeSwatch(parent, onClick)
+	local sw = CreateFrame("Button", nil, parent)
+	sw:SetSize(16, 16)
+	sw.border = sw:CreateTexture(nil, "BACKGROUND")
+	sw.border:SetAllPoints()
+	sw.border:SetColorTexture(0.6, 0.6, 0.6, 1)
+	sw.fill = sw:CreateTexture(nil, "ARTWORK")
+	sw.fill:SetPoint("TOPLEFT", 1, -1)
+	sw.fill:SetPoint("BOTTOMRIGHT", -1, 1)
+	sw:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	sw:SetScript("OnClick", onClick)
+	function sw:SetHex(hex)
+		self.fill:SetColorTexture(hexToRGB(hex))
+	end
+	return sw
+end
+
+local function guildName()
+	return (GetGuildInfo("player")) or "Guild"
+end
+
 local function createPanel()
 	local gc = GuildControlUI
 	local p = CreateFrame("Frame", "PFGGuildControlFrame", gc)
@@ -238,28 +372,139 @@ local function createPanel()
 	p:Hide()
 
 	local title = p:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-	title:SetPoint("TOPLEFT", 10, -12)
+	title:SetPoint("TOPLEFT", 10, -10)
 	title:SetText("Pidge's Forever Settings")
 
-	local intro = p:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	intro:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	-- Two pages: Links, and Colors & Ranks.
+	p.pages, p.tabs = {}, {}
+	local function showPage(i)
+		for j, page in ipairs(p.pages) do
+			page:SetShown(i == j)
+			p.tabs[j]:SetEnabled(i ~= j)
+		end
+		p.page = i
+		if p.where then
+			p.where:SetText(i == 1 and "Sent to guildmates with the addon when you save and whenever you log in."
+				or "Right-click a color to reset it to white. Officers can remove anyone's crafting orders.")
+		end
+	end
+	p.showPage = showPage
+	for i, label in ipairs({ "Links", "Colors & Ranks" }) do
+		local t = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+		t:SetSize(i == 1 and 70 or 120, 20)
+		if i == 1 then
+			t:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -2, -8)
+		else
+			t:SetPoint("LEFT", p.tabs[1], "RIGHT", 4, 0)
+		end
+		t:SetText(label)
+		t:SetScript("OnClick", function()
+			showPage(i)
+		end)
+		p.tabs[i] = t
+		local page = CreateFrame("Frame", nil, p)
+		page:SetPoint("TOPLEFT", 0, -62)
+		page:SetPoint("BOTTOMRIGHT", 0, 60)
+		p.pages[i] = page
+	end
+
+	-- Links page.
+	local links = p.pages[1]
+	local intro = links:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	intro:SetPoint("TOPLEFT", 10, 0)
 	intro:SetWidth(290)
 	intro:SetJustifyH("LEFT")
 	intro:SetText("These links appear as buttons on the guild Info tab for every member with the addon. Leave a box empty to hide its button.")
-
-	p.discord = makeBox(p, "Discord invite", "An invite link (discord.gg/...) or just its code.", intro, -16)
-	p.logs = makeBox(p, "Warcraft Logs guild page", "The guild's page link (warcraftlogs.com/guild/...).", p.discord.note, -14)
+	p.discord = makeBox(links, "Discord invite", "An invite link (discord.gg/...) or just its code.", intro, -12)
+	p.logs = makeBox(links, "Warcraft Logs guild page", "The guild's page link (warcraftlogs.com/guild/...).", p.discord.note, -10)
 	p.discord.next, p.logs.next = p.logs, p.discord
 
+	-- Colors & Ranks page.
+	local colors = p.pages[2]
+	local gLabel = colors:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	gLabel:SetPoint("TOPLEFT", 10, 0)
+	gLabel:SetText("Guild name")
+	p.guildSwatch = makeSwatch(colors, function(_, button)
+		if button == "RightButton" then
+			p.work.color = nil
+			p.refreshColors()
+		else
+			pickColor(p.work.color, function(hex)
+				p.work.color = hex
+				p.refreshColors()
+			end)
+		end
+	end)
+	p.guildSwatch:SetPoint("TOPLEFT", gLabel, "BOTTOMLEFT", 0, -6)
+	p.guildPreview = colors:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+	p.guildPreview:SetPoint("LEFT", p.guildSwatch, "RIGHT", 8, 0)
+
+	local rLabel = colors:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	rLabel:SetPoint("TOPLEFT", p.guildSwatch, "BOTTOMLEFT", 0, -10)
+	rLabel:SetText("Ranks")
+	local oLabel = colors:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+	oLabel:SetText("Officer")
+
+	p.rankRows = {}
+	for i = 1, 10 do
+		local row = CreateFrame("Frame", nil, colors)
+		row:SetSize(290, 18)
+		row:SetPoint("TOPLEFT", rLabel, "BOTTOMLEFT", 0, -4 - (i - 1) * 18)
+		row.swatch = makeSwatch(row, function(_, button)
+			if button == "RightButton" then
+				p.work.ranks[i] = nil
+				p.refreshColors()
+			else
+				pickColor(p.work.ranks[i], function(hex)
+					p.work.ranks[i] = hex
+					p.refreshColors()
+				end)
+			end
+		end)
+		row.swatch:SetPoint("LEFT", 0, 0)
+		row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		row.name:SetPoint("LEFT", row.swatch, "RIGHT", 8, 0)
+		row.officer = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+		row.officer:SetSize(18, 18)
+		row.officer:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+		row.officer:SetScript("OnClick", function(self)
+			p.work.officers[i] = self:GetChecked() and true or false
+			p.status:SetText("")
+		end)
+		p.rankRows[i] = row
+	end
+	oLabel:ClearAllPoints()
+	oLabel:SetPoint("BOTTOMRIGHT", p.rankRows[1], "TOPRIGHT", 0, 2)
+
+	function p.refreshColors()
+		local w = p.work
+		p.guildSwatch:SetHex(w.color)
+		p.guildPreview:SetText("|cff" .. (w.color or "ffffff") .. "<" .. guildName() .. ">|r")
+		local n = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
+		for i, row in ipairs(p.rankRows) do
+			if i <= n then
+				row.swatch:SetHex(w.ranks[i])
+				local rankName = GuildControlGetRankName and GuildControlGetRankName(i) or ("Rank " .. i)
+				row.name:SetText("|cff" .. (w.ranks[i] or "ffffff") .. rankName .. "|r")
+				row.officer:SetChecked(i == 1 or w.officers[i] == true)
+				row.officer:SetEnabled(i ~= 1)
+				row:Show()
+			else
+				row:Hide()
+			end
+		end
+		p.status:SetText("")
+	end
+
 	local where = p:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-	where:SetPoint("TOPLEFT", p.logs.note, "BOTTOMLEFT", 0, -16)
+	where:SetPoint("BOTTOMLEFT", 10, 34)
 	where:SetWidth(290)
 	where:SetJustifyH("LEFT")
-	where:SetText("Sent to guildmates with the addon when you save, and again whenever you log in. Members who were offline get them from you or from any guildmate who has them.")
+	p.where = where
 
 	p.status = p:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	p.status:SetPoint("TOPLEFT", where, "BOTTOMLEFT", 0, -12)
-	p.status:SetWidth(290)
+	p.status:SetPoint("BOTTOMLEFT", 10, 10)
+	p.status:SetPoint("RIGHT", -124, 0)
 	p.status:SetJustifyH("LEFT")
 
 	local save = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
@@ -269,22 +514,33 @@ local function createPanel()
 	p.save = save
 
 	local function fill()
-		local links = D.Links()
-		p.discord:SetText(links.discord or "")
-		p.logs:SetText(links.logs or "")
+		local l = D.Links()
+		p.discord:SetText(l.discord or "")
+		p.logs:SetText(l.logs or "")
 		p.discord:SetCursorPosition(0)
 		p.logs:SetCursorPosition(0)
+		local ranks, officers = {}, {}
+		for i = 1, 10 do
+			ranks[i] = l.ranks and l.ranks[i]
+			if l.officers then
+				officers[i] = l.officers[i] == true
+			else
+				officers[i] = i <= 2
+			end
+		end
+		p.work = { color = l.color, ranks = ranks, officers = officers }
+		p.refreshColors()
 	end
 	p.fill = fill
 
 	local function doSave()
 		p.discord:ClearFocus()
 		p.logs:ClearFocus()
-		local ok, err = D.SaveLinks(p.discord:GetText(), p.logs:GetText())
+		local ok, err = D.SaveLinks(p.discord:GetText(), p.logs:GetText(), p.work)
 		if ok then
 			fill()
 			p.status:SetTextColor(0.3, 1, 0.3)
-			p.status:SetText("Saved. Guildmates with the addon will see these buttons.")
+			p.status:SetText("Saved and sent to the guild.")
 		else
 			p.status:SetTextColor(1, 0.3, 0.3)
 			p.status:SetText(err)
@@ -306,8 +562,9 @@ local function createPanel()
 	end
 
 	p:SetScript("OnShow", function()
-		p.status:SetText("")
 		fill()
+		p.status:SetText("")
+		showPage(p.page or 1)
 	end)
 	-- Blizzard's own entries don't know about this page, so step aside as
 	-- soon as one of them is picked.
@@ -359,7 +616,8 @@ if Menu and Menu.ModifyMenu then
 end
 
 D.On("LINKS", function()
-	if panel and panel:IsShown() and not panel.discord:HasFocus() and not panel.logs:HasFocus() then
+	-- Don't throw away what the Guild Master is in the middle of editing.
+	if panel and panel:IsShown() and not panel.discord:HasFocus() and not panel.logs:HasFocus() and not (ColorPickerFrame and ColorPickerFrame:IsShown()) then
 		panel.fill()
 	end
 end)
@@ -383,4 +641,4 @@ D.Command("settings", function()
 		GuildControlUI:Show()
 		D.ShowGuildControlSettings()
 	end
-end, "/pfg settings - (Guild Master) set the guild's Discord and Warcraft Logs links")
+end, "/pfg settings - (Guild Master) the guild's links, colors and officer ranks")

@@ -97,6 +97,11 @@ local function act(fn, id)
 	end
 end
 
+-- Officers and up can remove someone else's unfinished order.
+function D.CanRemoveOrder(o)
+	return o.requester ~= D.Me() and (o.status == S.OPEN or o.status == S.ACCEPTED) and D.IsOfficer()
+end
+
 -- The buttons a row offers, depending on who you are and where the order is.
 -- Returns a list of { label, fn }.
 function D.OrderActions(o)
@@ -206,6 +211,24 @@ local function createRow(parent, i)
 	r.status:SetWidth(80)
 	r.status:SetJustifyH("RIGHT")
 
+	-- Officers' remove button (an X) at the far right, for others' orders.
+	r.remove = CreateFrame("Button", nil, r, "UIPanelCloseButton")
+	r.remove:SetSize(22, 22)
+	r.remove:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+	r.remove:SetScript("OnClick", function()
+		if r.order then
+			act(D.CancelOrder, r.order.id)
+		end
+	end)
+	r.remove:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText("Remove order")
+		GameTooltip:AddLine("As an officer you can cancel anyone's order.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	r.remove:SetScript("OnLeave", GameTooltip_Hide)
+	r.remove:Hide()
+
 	r.buttons = {}
 	for b = 1, 2 do
 		local btn = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
@@ -291,6 +314,17 @@ local function fillRow(r, o)
 	r.sub:SetText(table.concat(bits, "  ·  "))
 	r.status:SetText(statusText(o))
 	local actions = D.OrderActions(o)
+	local canRemove = D.CanRemoveOrder(o)
+	r.remove:SetShown(canRemove)
+	r.buttons[1]:ClearAllPoints()
+	if canRemove then
+		r.buttons[1]:SetPoint("RIGHT", r.remove, "LEFT", -2, 0)
+	else
+		r.buttons[1]:SetPoint("RIGHT", r, "RIGHT", -6, 0)
+	end
+	local shift = canRemove and 24 or 0
+	r.status:SetPoint("RIGHT", r, "RIGHT", -150 - shift, 0)
+	r.sub:SetPoint("RIGHT", r, "RIGHT", -230 - shift, 0)
 	for b, btn in ipairs(r.buttons) do
 		local a = actions[b]
 		if a then

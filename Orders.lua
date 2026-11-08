@@ -106,6 +106,10 @@ local function allowed(sender, new, old)
 	if not old then
 		return false
 	end
+	-- Officers and up may remove anyone's unfinished order.
+	if new.status == S.CANCELLED and (old.status == S.OPEN or old.status == S.ACCEPTED) and D.IsOfficer(sender) then
+		return true
+	end
 	if old.status == S.OPEN and new.status == S.ACCEPTED and new.crafter == sender then
 		return true
 	end
@@ -119,7 +123,9 @@ end
 local function notify(old, new, by)
 	local me = D.Me()
 	local item = new.itemName ~= "" and new.itemName or "your order"
-	if new.requester == me and by ~= me then
+	if new.requester == me and by ~= me and new.status == S.CANCELLED and old and old.status ~= S.CANCELLED then
+		D.print(("%s removed your order for %s."):format(D.Short(by), item))
+	elseif new.requester == me and by ~= me then
 		if new.status == S.ACCEPTED and (not old or old.status ~= S.ACCEPTED) then
 			D.print(("%s accepted your order for %s."):format(D.Short(new.crafter), item))
 		elseif new.status == S.DONE and (not old or old.status ~= S.DONE) then
@@ -128,7 +134,11 @@ local function notify(old, new, by)
 			D.print(("%s gave your order for %s back; it's open again."):format(D.Short(by), item))
 		end
 	elseif old and old.crafter == me and by ~= me and new.status == S.CANCELLED then
-		D.print(("%s cancelled their order for %s."):format(D.Short(by), item))
+		if by == new.requester then
+			D.print(("%s cancelled their order for %s."):format(D.Short(by), item))
+		else
+			D.print(("%s removed %s's order for %s that you were crafting."):format(D.Short(by), D.Short(new.requester), item))
+		end
 	end
 end
 
@@ -253,8 +263,8 @@ end
 
 function D.CancelOrder(id)
 	return change(id, function(o)
-		if o.requester ~= D.Me() then
-			return "Only the requester can cancel an order."
+		if o.requester ~= D.Me() and not D.IsOfficer() then
+			return "Only the requester or an officer can cancel an order."
 		elseif o.status == S.DONE or o.status == S.CANCELLED then
 			return "That order is already finished."
 		end

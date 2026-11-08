@@ -123,6 +123,79 @@ function D.Data()
 	return g
 end
 
+-- Ranks -----------------------------------------------------------------------------
+
+-- Names are compared without realm and case.
+function D.SameName(a, b)
+	return a and b and D.Short(a):lower() == D.Short(b):lower() or false
+end
+
+-- A guildmate's rank index (0 = Guild Master) from the roster, or nil.
+function D.RankIndexOf(name)
+	if D.SameName(name, D.Me()) then
+		local _, _, rankIndex = GetGuildInfo("player")
+		return rankIndex
+	end
+	if not GetNumGuildMembers or not GetGuildRosterInfo then
+		return nil
+	end
+	for i = 1, (GetNumGuildMembers()) or 0 do
+		local n, _, rankIndex = GetGuildRosterInfo(i)
+		if n and D.SameName(n, name) then
+			return rankIndex
+		end
+	end
+end
+
+-- Officers and up: the Guild Master, plus the ranks the Guild Master ticked
+-- in the settings (by default the rank just below them).
+function D.IsOfficerRank(rankIndex)
+	if rankIndex == nil then
+		return false
+	end
+	if rankIndex == 0 then
+		return true
+	end
+	local s = D.Links and D.Links() or {}
+	local officers = s.officers
+	if officers then
+		return officers[rankIndex + 1] == true
+	end
+	return rankIndex == 1
+end
+
+function D.IsOfficer(name)
+	return D.IsOfficerRank(D.RankIndexOf(name or D.Me()))
+end
+
+-- Version ---------------------------------------------------------------------------
+
+local function metadata(field)
+	if C_AddOns and C_AddOns.GetAddOnMetadata then
+		return C_AddOns.GetAddOnMetadata(ADDON, field)
+	end
+	return GetAddOnMetadata and GetAddOnMetadata(ADDON, field)
+end
+D.VERSION = metadata("Version") or "0"
+
+-- -1, 0 or 1 comparing "1.2.0"-style versions.
+function D.CompareVersions(a, b)
+	local pa, pb = {}, {}
+	for n in tostring(a):gmatch("%d+") do
+		pa[#pa + 1] = tonumber(n)
+	end
+	for n in tostring(b):gmatch("%d+") do
+		pb[#pb + 1] = tonumber(n)
+	end
+	for i = 1, math.max(#pa, #pb) do
+		local x, y = pa[i] or 0, pb[i] or 0
+		if x ~= y then
+			return x < y and -1 or 1
+		end
+	end
+	return 0
+end
+
 -- Callbacks ---------------------------------------------------------------------
 
 local listeners = {}
@@ -176,12 +249,13 @@ end
 
 -- Returns false if the client says we're sending too fast (modern clients
 -- drop the message and report it rather than queueing it).
-local function rawSend(msg)
+local function rawSend(item)
 	local result
+	local channel = item.target and "WHISPER" or "GUILD"
 	if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-		result = C_ChatInfo.SendAddonMessage(D.PREFIX, msg, "GUILD")
+		result = C_ChatInfo.SendAddonMessage(D.PREFIX, item.msg, channel, item.target)
 	elseif SendAddonMessage then
-		result = SendAddonMessage(D.PREFIX, msg, "GUILD")
+		result = SendAddonMessage(D.PREFIX, item.msg, channel, item.target)
 	end
 	local codes = Enum and Enum.SendAddonMessageResult
 	if type(result) == "number" and codes then
@@ -190,7 +264,7 @@ local function rawSend(msg)
 	return true
 end
 
-local function enqueue(q, ...)
+local function enqueue(q, target, ...)
 	if not D.InGuild() then
 		return
 	end
@@ -198,17 +272,22 @@ local function enqueue(q, ...)
 	if #msg > 250 then
 		msg = msg:sub(1, 250)
 	end
-	q[#q + 1] = msg
+	q[#q + 1] = { msg = msg, target = target }
 end
 
 -- A live change: sent as soon as the rate limit allows.
 function D.Send(...)
-	enqueue(live, ...)
+	enqueue(live, nil, ...)
 end
 
 -- Catch-up traffic: sent when nothing live is waiting.
 function D.SendBulk(...)
-	enqueue(bulk, ...)
+	enqueue(bulk, nil, ...)
+end
+
+-- To one player (any guild), e.g. asking another guild for its colors.
+function D.SendWhisper(target, ...)
+	enqueue(live, target, ...)
 end
 
 function D.QueueSizes()
@@ -229,11 +308,17 @@ comm:SetScript("OnUpdate", function(_, elapsed)
 	end
 end)
 
-local handlers = {}
+local handlers, whisperHandlers = {}, {}
 
--- Register a handler for one message type: fn(fields, sender)
+-- Register a handler for one guild message type: fn(fields, sender)
 function D.Handle(kind, fn)
 	handlers[kind] = fn
+end
+
+-- Register a handler for one whispered message type (from anyone, in any
+-- guild): fn(fields, sender)
+function D.HandleWhisper(kind, fn)
+	whisperHandlers[kind] = fn
 end
 
 -- Register events, skipping any this client doesn't have (registering an
@@ -291,11 +376,20 @@ comm:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
 		checkGuild()
 	elseif event == "CHAT_MSG_ADDON" then
 		local prefix, msg, channel, sender = a1, a2, a3, a4
-		if prefix ~= D.PREFIX or channel ~= "GUILD" or not sender or not D.InGuild() then
+		if prefix ~= D.PREFIX or not sender or not D.InGuild() then
 			return
 		end
 		sender = D.FullName(sender)
 		local fields = D.Unpack(msg)
+		if channel == "WHISPER" then
+			local fn = whisperHandlers[fields[1]]
+			if fn then
+				pcall(fn, fields, sender)
+			end
+			return
+		elseif channel ~= "GUILD" then
+			return
+		end
 		if fields[1] == "H" and helloNonce and fields[2] == helloNonce then
 			helloNonce = nil
 			if sender ~= myName then
