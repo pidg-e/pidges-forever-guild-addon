@@ -121,26 +121,6 @@ messages, and everyone keeps a copy in their saved variables. So only
 guildmates who run the addon take part, but they see each other's orders and
 professions even when the other person is offline.
 
-The way it keeps everyone in step is modelled on
-[CraftBoard](https://github.com/MartinPTielemans/craftboard):
-
-* Messages go through AceComm and ChatThrottleLib, which share the server's
-  addon bandwidth by size rather than one message a second, and split long
-  messages and join them back together. Your own changes (placing, accepting,
-  finishing an order) always go first.
-* Catch-up traffic is bundled and compressed with LibDeflate, so a sync of
-  hundreds of orders takes a handful of messages.
-* When you log in, your addon sends a list of the orders it has. One online
-  guildmate answers with only the ones you're missing or have old copies of,
-  and you send back any they're missing.
-* Every ten minutes or so each addon shares a short fingerprint of its orders.
-  If someone's doesn't match, they ask for a sync, so a missed message gets
-  fixed on its own.
-
-Version 1.3.0 talks a new protocol: guildmates on 1.2.4 or older don't see
-orders from 1.3.0 (and the other way round) until they update. They get an
-in-game note asking them to.
-
 ### Commands
 
 * `/pfg orders` opens the crafting orders.
