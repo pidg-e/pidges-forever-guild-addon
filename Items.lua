@@ -1,4 +1,4 @@
--- Dreamscape: item names for the crafting order form. WoW has no way to
+-- Pidge's Forever Guild: item names for the crafting order form. WoW has no way to
 -- search every item by name, so the addon keeps its own list of items it has
 -- come across: things in your bags, item links in chat, items on orders, and
 -- the recipes guild crafters know. Crafters share what their recipes make,
@@ -11,11 +11,11 @@ local D = ns.D
 -- Item names (the same for every guild, so kept outside the guild data) --------
 
 local function cache()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
-	DreamscapeDB.items = DreamscapeDB.items or {}
-	return DreamscapeDB.items
+	PidgesForeverGuildDB.items = PidgesForeverGuildDB.items or {}
+	return PidgesForeverGuildDB.items
 end
 
 local function getInfo(id)
@@ -26,23 +26,23 @@ local function getInfo(id)
 end
 
 -- Craftable items ------------------------------------------------------------------
--- DreamscapeDB.crafts[itemID] = profession code. Only these can be ordered.
+-- PidgesForeverGuildDB.crafts[itemID] = profession code. Only these can be ordered.
 -- The game tells us what's craftable three ways: recipe spells (on clients
 -- with the modern profession API), recipe items ("Pattern: Robe of the
 -- Archmage", a Tailoring recipe), and what guild crafters' recipes make.
 
 local function crafts()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
-	DreamscapeDB.crafts = DreamscapeDB.crafts or {}
-	return DreamscapeDB.crafts
+	PidgesForeverGuildDB.crafts = PidgesForeverGuildDB.crafts or {}
+	return PidgesForeverGuildDB.crafts
 end
 
 -- Recipe item names waiting for their product's name: lower name -> code.
 local function recipeProducts()
-	DreamscapeDB.recipeProducts = DreamscapeDB.recipeProducts or {}
-	return DreamscapeDB.recipeProducts
+	PidgesForeverGuildDB.recipeProducts = PidgesForeverGuildDB.recipeProducts or {}
+	return PidgesForeverGuildDB.recipeProducts
 end
 
 local byName -- lower name -> itemID, built on first use
@@ -197,14 +197,14 @@ local CRAFTED_CLASSES = { [0] = true, [1] = true, [2] = true, [4] = true, [6] = 
 local inFlight, inFlightCount = {}, 0
 
 local function scanState()
-	if not DreamscapeDB then
+	if not PidgesForeverGuildDB then
 		return nil
 	end
 	local build = GetBuildInfo and select(4, GetBuildInfo()) or 0
-	local st = DreamscapeDB.itemScan
+	local st = PidgesForeverGuildDB.itemScan
 	if not st or st.build ~= build or st.v ~= SCAN_VERSION then
 		st = { build = build, v = SCAN_VERSION, next = 1, spell = 1 }
-		DreamscapeDB.itemScan = st
+		PidgesForeverGuildDB.itemScan = st
 	end
 	return st
 end
@@ -313,7 +313,7 @@ local function scanStep(now)
 end
 D._scanItemsStep = scanStep
 
--- How far along the walk is, for /ds items: items read, of how many, and
+-- How far along the walk is, for /pfg items: items read, of how many, and
 -- how many craftable items we know (and have names for).
 function D.ItemScanProgress()
 	local st = scanState()
@@ -395,20 +395,26 @@ end
 -- How many item IDs fit in one message after the other fields.
 local PER_MESSAGE = 24
 
-function D.SendRecipes(name)
+-- since: only professions re-shared after this time (sync answers send in bulk).
+function D.SendRecipes(name, since)
 	local all = recipes()
 	local entry = all and all[name]
 	if not entry then
 		return
 	end
+	local send = since and D.SendBulk or D.Send
 	for code, r in pairs(entry.profs) do
+		if since and (r.ts or 0) <= since then
+			-- they already have this one
+		else
 		local list = {}
 		for id in pairs(r.ids) do
 			list[#list + 1] = id
 		end
 		table.sort(list)
 		for i = 1, #list, PER_MESSAGE do
-			D.Send("K", name, code, r.ts, entry.guid or "", table.concat(list, ",", i, math.min(#list, i + PER_MESSAGE - 1)))
+			send("K", name, code, r.ts, entry.guid or "", table.concat(list, ",", i, math.min(#list, i + PER_MESSAGE - 1)))
+		end
 		end
 	end
 end
@@ -518,9 +524,30 @@ end
 
 -- Searching --------------------------------------------------------------------------
 
+-- Items that exist in the game files but can't be had: NPC weapons
+-- ("Monster - 2H Axe"), test and placeholder items, old copies, and the like.
+local JUNK = {
+	"^monster ?%-", "pvp", "^test%f[%W]", "%f[%w]test%f[%W]",  "^%[ph%]", "%[ph%]", "placeholder",
+	"deprecated", "^old ", "[%(%[]old[%)%]]", "^unused", "unused$", "^zz", "^qa ", "%f[%w]dnd%f[%W]", "^npc ",
+	"^nas ", "debug", "^%[?dep%]? ", "^tmp", "^copy of",
+}
+function D.IsObtainable(name)
+	local lower = (name or ""):lower()
+	if lower == "" then
+		return false
+	end
+	for _, pat in ipairs(JUNK) do
+		if lower:find(pat) then
+			return false
+		end
+	end
+	return true
+end
+
 -- Craftable items whose names contain `text`, best first: things the guild
 -- can craft, then names that start with it, then the rest.
-function D.SearchItems(text, limit)
+-- any: every item we know of, not only craftable ones (for the wishlist).
+function D.SearchItems(text, limit, any)
 	limit = limit or 8
 	local out = {}
 	text = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
@@ -537,8 +564,8 @@ function D.SearchItems(text, limit)
 	end
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
-		local at = craftable[id] and name:lower():find(text, 1, true)
-		if at then
+		local at = (any or craftable[id]) and name:lower():find(text, 1, true)
+		if at and D.IsObtainable(name) then
 			out[#out + 1] = { id = id, name = name, craft = makeable[id] or false, prefix = at == 1 }
 		end
 	end
@@ -561,20 +588,20 @@ function D.SearchItems(text, limit)
 end
 
 -- The craftable item a typed name means, if we know one by exactly that name.
-function D.FindItem(text)
+function D.FindItem(text, any)
 	text = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
 	if text == "" then
 		return nil
 	end
 	local craftable = crafts() or {}
 	for id, name in pairs(cache() or {}) do
-		if craftable[id] and name:lower() == text then
+		if (any or craftable[id]) and name:lower() == text and D.IsObtainable(name) then
 			return id, name
 		end
 	end
 	local name, link = getInfo(text)
 	local id = link and tonumber(link:match("item:(%d+)"))
-	if id and craftable[id] then
+	if id and (any or craftable[id]) then
 		D.LearnItem(id, name)
 		return id, name
 	end
@@ -604,7 +631,7 @@ D.RegisterEvents(ev, "GET_ITEM_INFO_RECEIVED", "BAG_UPDATE_DELAYED")
 
 local recipeScan, bagScan = false, false
 ev:SetScript("OnEvent", function(_, event, a1)
-	if not D.InDreamscape() then
+	if not D.InGuild() then
 		return
 	end
 	if event == "GET_ITEM_INFO_RECEIVED" then
@@ -679,4 +706,4 @@ end)
 D.Command("items", function()
 	local done, total, craftable, named = D.ItemScanProgress()
 	D.print(("knows %d craftable items, %d with names so far (read %d of %d item IDs)."):format(craftable, named, done, total))
-end, "/ds items - how many items the order form can suggest")
+end, "/pfg items - how many items the order form can suggest")

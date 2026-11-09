@@ -1,4 +1,4 @@
--- Dreamscape: the Crafting Orders tab on the guild panel. It sits under
+-- Pidge's Forever Guild: the Crafting Orders tab on the guild panel. It sits under
 -- Blizzard's side tabs (Chat, Roster, Benefits, Info) and covers the content
 -- area while it's selected.
 
@@ -28,12 +28,18 @@ local function money(copper)
 	end
 	local g = math.floor(copper / 10000)
 	local s = math.floor(copper / 100) % 100
-	if g > 0 and s > 0 then
-		return ("%dg %ds"):format(g, s)
-	elseif g > 0 then
-		return ("%dg"):format(g)
+	local c = copper % 100
+	local parts = {}
+	if g > 0 then
+		parts[#parts + 1] = g .. "g"
 	end
-	return ("%ds"):format(s)
+	if s > 0 then
+		parts[#parts + 1] = s .. "s"
+	end
+	if c > 0 then
+		parts[#parts + 1] = c .. "c"
+	end
+	return table.concat(parts, " ")
 end
 D._money = money
 
@@ -70,7 +76,8 @@ local function visible(o)
 		return false
 	end
 	if state.filter == "open" then
-		return o.status == S.OPEN
+		-- Taken orders stay listed (marked as taken) so nobody else starts on them.
+		return o.status == S.OPEN or o.status == S.ACCEPTED
 	elseif state.filter == "mine" then
 		return o.requester == me and (o.status == S.OPEN or o.status == S.ACCEPTED)
 	elseif state.filter == "crafts" then
@@ -79,7 +86,10 @@ local function visible(o)
 	return o.status == S.DONE or o.status == S.CANCELLED
 end
 
+-- Whisper by name only: everyone in the guild is on the same server, and
+-- "Name-Realm" in the chat box looks wrong there.
 local function whisper(name)
+	name = D.Short(name)
 	if ChatFrameUtil and ChatFrameUtil.SendTell then
 		ChatFrameUtil.SendTell(name)
 	elseif ChatFrame_SendTell then
@@ -87,11 +97,19 @@ local function whisper(name)
 	end
 end
 
+D._itemInfo = itemInfo
+D._whisper = whisper
+
 local function act(fn, id)
 	local ok, err = fn(id)
 	if not ok and err then
 		D.print(err)
 	end
+end
+
+-- Officers and up can remove someone else's unfinished order.
+function D.CanRemoveOrder(o)
+	return o.requester ~= D.Me() and (o.status == S.OPEN or o.status == S.ACCEPTED) and D.IsOfficer()
 end
 
 -- The buttons a row offers, depending on who you are and where the order is.
@@ -121,6 +139,8 @@ end
 local function statusText(o)
 	if o.status == S.OPEN then
 		return "|cff66ff66Open|r"
+	elseif o.status == S.ACCEPTED and state.filter == "open" and o.crafter ~= D.Me() then
+		return "|cff999999Taken by|r " .. D.Short(o.crafter)
 	elseif o.status == S.ACCEPTED then
 		return "|cffffd100Crafting:|r " .. D.Short(o.crafter)
 	elseif o.status == S.DONE then
@@ -202,6 +222,46 @@ local function createRow(parent, i)
 	r.status:SetPoint("RIGHT", r, "RIGHT", -150, 0)
 	r.status:SetWidth(80)
 	r.status:SetJustifyH("RIGHT")
+
+	-- Officers' remove button (an X) at the far right, for others' orders.
+	r.remove = CreateFrame("Button", nil, r, "UIPanelCloseButton")
+	r.remove:SetSize(22, 22)
+	r.remove:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+	r.remove:SetScript("OnClick", function()
+		if r.order then
+			act(D.CancelOrder, r.order.id)
+		end
+	end)
+	r.remove:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText("Remove order")
+		GameTooltip:AddLine("As an officer you can cancel anyone's order.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	r.remove:SetScript("OnLeave", GameTooltip_Hide)
+	r.remove:Hide()
+
+	-- Crafter's mail button: fills in the mailbox for the requester.
+	r.mail = CreateFrame("Button", nil, r)
+	r.mail:SetSize(20, 20)
+	r.mail:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
+	r.mail:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	r.mail:SetScript("OnClick", function()
+		if r.order then
+			local ok, err = D.MailOrder(r.order)
+			if not ok and err then
+				D.print(err)
+			end
+		end
+	end)
+	r.mail:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText("Mail it")
+		GameTooltip:AddLine("At a mailbox: fills in the recipient, subject and the crafted items, with a COD for the tip. Check it and press Send.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	r.mail:SetScript("OnLeave", GameTooltip_Hide)
+	r.mail:Hide()
 
 	r.buttons = {}
 	for b = 1, 2 do
@@ -287,7 +347,41 @@ local function fillRow(r, o)
 	end
 	r.sub:SetText(table.concat(bits, "  ·  "))
 	r.status:SetText(statusText(o))
+	local taken = o.status == S.ACCEPTED and o.crafter ~= D.Me() and o.requester ~= D.Me()
+	r:SetAlpha(taken and state.filter == "open" and 0.6 or 1)
 	local actions = D.OrderActions(o)
+	-- Small icon buttons at the far right: mail (the crafter's) and remove
+	-- (officers').
+	local icons = {}
+	local canMail = D.CanMailOrder(o)
+	r.mail:SetShown(canMail)
+	if canMail then
+		icons[#icons + 1] = r.mail
+	end
+	local canRemove = D.CanRemoveOrder(o)
+	r.remove:SetShown(canRemove)
+	if canRemove then
+		icons[#icons + 1] = r.remove
+	end
+	local anchor = nil
+	for i = #icons, 1, -1 do
+		icons[i]:ClearAllPoints()
+		if anchor then
+			icons[i]:SetPoint("RIGHT", anchor, "LEFT", -2, 0)
+		else
+			icons[i]:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+		end
+		anchor = icons[i]
+	end
+	r.buttons[1]:ClearAllPoints()
+	if anchor then
+		r.buttons[1]:SetPoint("RIGHT", anchor, "LEFT", -2, 0)
+	else
+		r.buttons[1]:SetPoint("RIGHT", r, "RIGHT", -6, 0)
+	end
+	local shift = #icons * 24
+	r.status:SetPoint("RIGHT", r, "RIGHT", -150 - shift, 0)
+	r.sub:SetPoint("RIGHT", r, "RIGHT", -230 - shift, 0)
 	for b, btn in ipairs(r.buttons) do
 		local a = actions[b]
 		if a then
@@ -318,6 +412,17 @@ function D.RefreshOrders()
 		if visible(o) then
 			list[#list + 1] = o
 		end
+	end
+	if state.filter == "open" then
+		-- Open ones first, taken ones after; newest first within each.
+		local open, taken = {}, {}
+		for _, o in ipairs(list) do
+			table.insert(o.status == S.OPEN and open or taken, o)
+		end
+		for _, o in ipairs(taken) do
+			open[#open + 1] = o
+		end
+		list = open
 	end
 	local rows = panel.rows
 	local fit = math.max(1, math.floor((panel.list:GetHeight() or (ROW_H * 6)) / ROW_H))
@@ -603,7 +708,9 @@ local function resetForm()
 	form.placeholder:Show()
 	hideSuggestions()
 	form.qty:SetText("1")
-	form.tip:SetText("")
+	form.tipGold:SetText("")
+	form.tipSilver:SetText("")
+	form.tipCopper:SetText("")
 	form.note:SetText("")
 	form.error:SetText("")
 	local p = D.PROF_BY_CODE[form.prof or ""]
@@ -687,11 +794,36 @@ local function createForm(parent)
 		end)
 	end)
 
-	label(f, "Tip (gold)", top, -102)
-	f.tip = input(f, 70, true, 6)
-	f.tip:SetPoint("TOPLEFT", top, "TOPLEFT", 110, -98)
+	label(f, "Tip", top, -102)
+	-- Gold, silver and copper, like WoW's own money boxes.
+	local coins = {
+		{ key = "tipGold", width = 60, letters = 6, icon = "Interface\\MoneyFrame\\UI-GoldIcon" },
+		{ key = "tipSilver", width = 30, letters = 2, icon = "Interface\\MoneyFrame\\UI-SilverIcon" },
+		{ key = "tipCopper", width = 30, letters = 2, icon = "Interface\\MoneyFrame\\UI-CopperIcon" },
+	}
+	local prevCoin
+	for i, c in ipairs(coins) do
+		local box = input(f, c.width, true, c.letters)
+		if prevCoin then
+			box:SetPoint("LEFT", prevCoin.coin, "RIGHT", 10, 0)
+		else
+			box:SetPoint("TOPLEFT", top, "TOPLEFT", 110, -98)
+		end
+		box.coin = f:CreateTexture(nil, "ARTWORK")
+		box.coin:SetSize(13, 13)
+		box.coin:SetTexture(c.icon)
+		box.coin:SetPoint("LEFT", box, "RIGHT", 2, 0)
+		f[c.key] = box
+		prevCoin = box
+	end
+	f.tipGold.next, f.tipSilver.next, f.tipCopper.next = f.tipSilver, f.tipCopper, f.tipGold
+	for _, c in ipairs(coins) do
+		f[c.key]:SetScript("OnTabPressed", function(self)
+			self.next:SetFocus()
+		end)
+	end
 	local tipHint = f:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-	tipHint:SetPoint("LEFT", f.tip, "RIGHT", 10, 0)
+	tipHint:SetPoint("LEFT", f.tipCopper.coin, "RIGHT", 10, 0)
 	tipHint:SetText("Optional, paid to the crafter")
 
 	label(f, "Note", top, -136)
@@ -711,7 +843,9 @@ local function createForm(parent)
 	post:SetPoint("TOPLEFT", top, "TOPLEFT", 104, -218)
 	post:SetText("Post Order")
 	post:SetScript("OnClick", function()
-		local tip = tonumber(f.tip:GetText()) or 0
+		local tip = (tonumber(f.tipGold:GetText()) or 0) * 10000
+			+ math.min(99, tonumber(f.tipSilver:GetText()) or 0) * 100
+			+ math.min(99, tonumber(f.tipCopper:GetText()) or 0)
 		if (f.itemID or 0) == 0 then
 			local id, name = D.FindItem(f.item:GetText())
 			if not id then
@@ -729,7 +863,7 @@ local function createForm(parent)
 			itemName = f.item:GetText(),
 			qty = tonumber(f.qty:GetText()) or 1,
 			prof = f.prof,
-			tip = tip * 10000,
+			tip = tip,
 			note = f.note:GetText(),
 		})
 		if not ok then
@@ -801,7 +935,7 @@ local function createPanel()
 	-- Laid out like the guild Info page: the title sits on the frame's grey
 	-- strip at the top (which shows through), and the content fills the same
 	-- box that Info and Guild News share.
-	local p = CreateFrame("Frame", "DreamscapeOrdersFrame", cf)
+	local p = CreateFrame("Frame", "PFGOrdersFrame", cf)
 	p:SetPoint("TOPLEFT", cf.CommunitiesList, "TOPRIGHT", 0, 0)
 	p:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", -6, 26)
 	p:SetFrameLevel(500)
@@ -849,6 +983,13 @@ local function createPanel()
 	header:SetPoint("TOPLEFT", box, "TOPLEFT", 2, -2)
 	header:SetPoint("TOPRIGHT", box, "TOPRIGHT", -2, -2)
 	header:SetHeight(30)
+	-- A grey line between the filter tabs and the list.
+	local line = box:CreateTexture(nil, "ARTWORK")
+	line:SetColorTexture(0.45, 0.45, 0.45, 0.9)
+	line:SetHeight(3)
+	line:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
+	line:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, 0)
+	p.headerLine = line
 	p.newButton:SetScript("OnClick", function()
 		D.ShowOrderForm(true)
 	end)
@@ -952,7 +1093,7 @@ local function createPanel()
 
 	local help = p:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	help:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 6)
-	help:SetText("Only guildmates with the Dreamscape addon see these orders.")
+	help:SetText("Only guildmates with Pidge's Forever Guild AddOn see these orders.")
 
 	p:SetScript("OnShow", D.RefreshOrders)
 	return p
@@ -992,6 +1133,11 @@ local function uncover()
 		covered[i] = nil
 	end
 end
+-- Shared with the wishlist, which covers the same frames.
+D.CoverGuildContent, D.UncoverGuildContent = cover, uncover
+D.ForgetCoveredContent = function()
+	wipe(covered)
+end
 
 local function setChecked()
 	local cf = CommunitiesFrame
@@ -1014,6 +1160,7 @@ function D.ShowOrders(show)
 	end
 	if show then
 		if not panel:IsShown() then
+			D.Fire("PANEL", "orders") -- the wishlist closes
 			cover()
 		end
 		panel:Show()
@@ -1034,11 +1181,11 @@ function D.ShowOrders(show)
 end
 
 -- Our tab shows whenever Blizzard's guild tabs do (a guild is selected), and
--- only for members of <Dreamscape>.
+-- only while we are in a guild.
 local function updateTab()
 	local cf = CommunitiesFrame
 	local info = cf.GuildInfoTab
-	local shown = info and info:IsShown() and D.InDreamscape()
+	local shown = info and info:IsShown() and D.InGuild()
 	tab:SetShown(shown and true or false)
 	if not shown then
 		D.ShowOrders(false)
@@ -1049,9 +1196,9 @@ end
 
 local function createTab()
 	local cf = CommunitiesFrame
-	local ok, t = pcall(CreateFrame, "CheckButton", "DreamscapeOrdersTab", cf, "CommunitiesFrameTabTemplate")
+	local ok, t = pcall(CreateFrame, "CheckButton", "PFGOrdersTab", cf, "CommunitiesFrameTabTemplate")
 	if not ok or not t then
-		t = CreateFrame("CheckButton", "DreamscapeOrdersTab", cf)
+		t = CreateFrame("CheckButton", "PFGOrdersTab", cf)
 		t:SetSize(32, 32)
 	end
 	if type(t.Icon) ~= "table" then
@@ -1157,4 +1304,4 @@ D.Command({ "orders", "craft" }, function()
 			end
 		end)
 	end
-end, "/ds orders - open the guild's crafting orders")
+end, "/pfg orders - open the guild's crafting orders")

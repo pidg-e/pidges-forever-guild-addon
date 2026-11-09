@@ -1,50 +1,60 @@
--- Dreamscape: link buttons on the guild panel's Info tab, level with the
--- "Info" title above the Message of the Day: Discord, then Warcraft Logs and
--- the addon's GitHub page to its left. WoW can't open web pages, so clicking one shows its link ready to
--- copy (Ctrl+C) and paste into a browser.
+-- Pidge's Forever Guild: link buttons on the guild panel's Info tab, level
+-- with the "Info" title above the Message of the Day. The addon's own
+-- (CurseForge) button is always there; the guild's Discord and Warcraft Logs
+-- buttons appear to its right once the Guild Master has set them (see
+-- Settings.lua), pushing it to the left. WoW can't open web pages, so
+-- clicking one shows its link ready to copy (Ctrl+C) and paste into a browser.
 
 local ADDON, ns = ...
 local D = ns.D
 
-local MEDIA = "Interface\\AddOns\\Dreamscape\\media\\"
 local ICON_SIZE = 22
 local GAP = 4
+local HINT = "Press Ctrl+C to copy, then paste it in your browser."
 
--- Right to left, starting at the right edge of the MOTD box.
+-- Right to left, starting at the right edge of the MOTD box. A link with a
+-- "setting" only shows once the guild has one (D.Links()[setting]).
 D.LINKS = {
 	{
 		key = "Discord",
 		title = "Discord",
 		tooltip = "Discord",
-		url = "https://discord.gg/4uNGKeyyjN",
-		icon = MEDIA .. "discord",
-		hint = "Press Ctrl+C to copy, then paste it in your browser.",
+		setting = "discord",
+		icon = D.MEDIA .. "discord",
+		hint = HINT,
 	},
 	{
 		key = "Logs",
 		title = "Warcraft Logs",
 		tooltip = "Warcraft Logs",
-		url = "https://forever.warcraftlogs.com/guild/id/833285",
-		icon = MEDIA .. "logs",
-		hint = "Press Ctrl+C to copy, then paste it in your browser.",
+		setting = "logs",
+		icon = D.MEDIA .. "logs",
+		hint = HINT,
 	},
 	{
-		key = "GitHub",
-		title = "Dreamscape Addon",
-		tooltip = "Dreamscape Addon",
-		url = "https://github.com/pidg-e/dreamscape-addon",
-		icon = MEDIA .. "github",
-		hint = "Press Ctrl+C to copy, then paste it in your browser.",
+		key = "CurseForge",
+		title = D.TITLE,
+		tooltip = D.TITLE .. " on CurseForge",
+		url = "https://www.curseforge.com/wow/addons/pidges-forever-guild-addon",
+		icon = D.MEDIA .. "curseforge",
+		hint = HINT,
 	},
 }
-D.DISCORD_INVITE = D.LINKS[1].url
+
+-- The link's address right now, or nil if the guild hasn't set it.
+function D.LinkURL(link)
+	if link.setting then
+		return D.Links()[link.setting]
+	end
+	return link.url
+end
 
 -- The link popup -------------------------------------------------------------
 
 local popup
 
 local function createPopup()
-	local f = CreateFrame("Frame", "DreamscapeLinkPopup", UIParent, "BackdropTemplate")
+	local f = CreateFrame("Frame", "PFGLinkPopup", UIParent, "BackdropTemplate")
 	f:SetSize(340, 104)
 	f:SetPoint("CENTER", 0, 120)
 	f:SetFrameStrata("DIALOG")
@@ -118,7 +128,7 @@ end
 
 function D.ShowLink(link)
 	popup = popup or createPopup()
-	popup.url = link.url
+	popup.url = D.LinkURL(link)
 	popup.icon:SetTexture(link.icon)
 	popup.title:SetText(link.title)
 	popup.hint:SetText(link.hint)
@@ -129,12 +139,23 @@ function D.ShowLink(link)
 	end
 end
 
+-- For /pfg discord and /pfg logs.
+local function showSetting(link)
+	if D.LinkURL(link) then
+		D.ShowLink(link)
+	elseif IsGuildLeader() then
+		D.print("your guild has no " .. link.title .. " link yet. Add it under Guild Control > Pidge's Forever Settings (or /pfg settings).")
+	else
+		D.print("your guild has no " .. link.title .. " link yet. The Guild Master can add one.")
+	end
+end
+
 function D.ShowDiscordInvite()
-	D.ShowLink(D.LINKS[1])
+	showSetting(D.LINKS[1])
 end
 
 function D.ShowLogs()
-	D.ShowLink(D.LINKS[2])
+	showSetting(D.LINKS[2])
 end
 
 -- The buttons on the guild Info tab -----------------------------------------
@@ -144,9 +165,21 @@ local buttons = {}
 -- Blizzard moves the Message of the Day up when the guild has no challenges
 -- (always, on Classic), so find whichever header the MOTD box hangs from.
 local function placeButtons()
-	local first = buttons[1]
-	local info = first and first:GetParent()
+	local info = buttons[1] and buttons[1]:GetParent()
 	if not info then
+		return
+	end
+	-- Only the buttons with a link, right to left.
+	local shown = {}
+	for _, b in ipairs(buttons) do
+		local on = D.InGuild() and D.LinkURL(b.link) ~= nil
+		b:SetShown(on)
+		if on then
+			shown[#shown + 1] = b
+		end
+	end
+	local first = shown[1]
+	if not first then
 		return
 	end
 	local header = info.Header1
@@ -156,9 +189,6 @@ local function placeButtons()
 		if relativeTo then
 			header = relativeTo
 		end
-	end
-	for _, b in ipairs(buttons) do
-		b:SetShown(D.InDreamscape())
 	end
 	first:ClearAllPoints()
 	local title = info.TitleText
@@ -176,15 +206,19 @@ local function placeButtons()
 	else
 		first:SetPoint("TOPRIGHT", info, "TOPRIGHT", -6, 24)
 	end
-	for i = 2, #buttons do
-		buttons[i]:ClearAllPoints()
-		buttons[i]:SetPoint("RIGHT", buttons[i - 1], "LEFT", -GAP, 0)
+	for i = 2, #shown do
+		shown[i]:ClearAllPoints()
+		shown[i]:SetPoint("RIGHT", shown[i - 1], "LEFT", -GAP, 0)
 	end
+	-- The version text sits just left of the leftmost button.
+	D.leftmostButton = shown[#shown]
+	D.Fire("BUTTONS_PLACED")
 end
 D._placeButtons = placeButtons
 
 local function makeButton(info, link)
-	local b = CreateFrame("Button", "Dreamscape" .. link.key .. "Button", info)
+	local b = CreateFrame("Button", "PFG" .. link.key .. "Button", info)
+	b.link = link
 	b:SetSize(ICON_SIZE, ICON_SIZE)
 	b:SetFrameLevel(info:GetFrameLevel() + 10)
 	b:SetNormalTexture(link.icon)
@@ -222,9 +256,10 @@ end
 
 D.OnGuildPanel(addButtons)
 D.On("GUILD", placeButtons)
+D.On("LINKS", placeButtons)
 
-D.Command("discord", D.ShowDiscordInvite, "/ds discord - the guild's Discord invite link")
-D.Command({ "logs", "wcl" }, D.ShowLogs, "/ds logs - the guild's Warcraft Logs page")
-D.Command({ "github", "addon" }, function()
+D.Command("discord", D.ShowDiscordInvite, "/pfg discord - the guild's Discord invite link")
+D.Command({ "logs", "wcl" }, D.ShowLogs, "/pfg logs - the guild's Warcraft Logs page")
+D.Command({ "curseforge", "addon", "github" }, function()
 	D.ShowLink(D.LINKS[3])
-end, "/ds github - the addon's GitHub page")
+end, "/pfg curseforge - the addon's CurseForge page")

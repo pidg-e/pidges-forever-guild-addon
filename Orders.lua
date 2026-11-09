@@ -1,4 +1,4 @@
--- Dreamscape: guild crafting orders. Orders live in every member's saved data
+-- Pidge's Forever Guild: guild crafting orders. Orders live in every member's saved data
 -- and travel over guild addon messages, so anyone with the addon sees the same
 -- board, even for members who are offline.
 --
@@ -52,8 +52,8 @@ local function fromFields(f)
 end
 D._orderFromFields = fromFields
 
-local function send(kind, o)
-	D.Send(kind, unpack(toFields(o)))
+local function send(kind, o, isBulk)
+	(isBulk and D.SendBulk or D.Send)(kind, unpack(toFields(o)))
 end
 
 -- Storage -------------------------------------------------------------------------
@@ -106,6 +106,10 @@ local function allowed(sender, new, old)
 	if not old then
 		return false
 	end
+	-- Officers and up may remove anyone's unfinished order.
+	if new.status == S.CANCELLED and (old.status == S.OPEN or old.status == S.ACCEPTED) and D.IsOfficer(sender) then
+		return true
+	end
 	if old.status == S.OPEN and new.status == S.ACCEPTED and new.crafter == sender then
 		return true
 	end
@@ -119,7 +123,9 @@ end
 local function notify(old, new, by)
 	local me = D.Me()
 	local item = new.itemName ~= "" and new.itemName or "your order"
-	if new.requester == me and by ~= me then
+	if new.requester == me and by ~= me and new.status == S.CANCELLED and old and old.status ~= S.CANCELLED then
+		D.print(("%s removed your order for %s."):format(D.Short(by), item))
+	elseif new.requester == me and by ~= me then
 		if new.status == S.ACCEPTED and (not old or old.status ~= S.ACCEPTED) then
 			D.print(("%s accepted your order for %s."):format(D.Short(new.crafter), item))
 		elseif new.status == S.DONE and (not old or old.status ~= S.DONE) then
@@ -128,7 +134,11 @@ local function notify(old, new, by)
 			D.print(("%s gave your order for %s back; it's open again."):format(D.Short(by), item))
 		end
 	elseif old and old.crafter == me and by ~= me and new.status == S.CANCELLED then
-		D.print(("%s cancelled their order for %s."):format(D.Short(by), item))
+		if by == new.requester then
+			D.print(("%s cancelled their order for %s."):format(D.Short(by), item))
+		else
+			D.print(("%s removed %s's order for %s that you were crafting."):format(D.Short(by), D.Short(new.requester), item))
+		end
 	end
 end
 
@@ -192,7 +202,7 @@ function D.PlaceOrder(t)
 	local now = D.Now()
 	local me = D.Me()
 	return commit({
-		id = ("%s:%d:%d"):format(me, now, math.random(100, 999)),
+		id = ("%s:%d:%d"):format(me, now, math.random(100000, 999999)),
 		requester = me,
 		itemID = t.itemID or 0,
 		itemName = name,
@@ -253,8 +263,8 @@ end
 
 function D.CancelOrder(id)
 	return change(id, function(o)
-		if o.requester ~= D.Me() then
-			return "Only the requester can cancel an order."
+		if o.requester ~= D.Me() and not D.IsOfficer() then
+			return "Only the requester or an officer can cancel an order."
 		elseif o.status == S.DONE or o.status == S.CANCELLED then
 			return "That order is already finished."
 		end
@@ -264,43 +274,153 @@ function D.CancelOrder(id)
 end
 
 -- Sync ----------------------------------------------------------------------------
--- When someone logs in they ask the guild for everything ("S"). One member
--- answers: each waits a random moment, and the first to start announces it
--- ("D") so the others stand down. The answer is every order ("R"), every
--- member's professions ("P") and what their recipes make ("K").
+-- Modelled on how CraftBoard keeps its board in step: compare a short
+-- fingerprint first, and only send what's actually different.
+--
+-- * Every member's addon says "HD <count:hash>" (a fingerprint of every order
+--   it holds and its revision) a little after login and every ~10 minutes.
+--   Anyone whose own fingerprint differs knows the boards have drifted apart.
+-- * Then one of them asks for a sync: "S" with a list of every order it holds
+--   and its revision ("M" lines), in one compressed message.
+-- * One member answers (each waits a random moment, and the first to start
+--   announces it with "D" so the others stand down). The answer is one
+--   compressed batch: the orders the asker is missing or has older copies of
+--   ("R"), members' professions ("P") and recipes ("K") changed since the
+--   asker's last sync, and "W" for the orders the asker has newer copies of.
+-- * The asker sends those "W" orders back to the whole guild, so both sides
+--   (and everyone listening) end up the same.
 
-local pending = {} -- requester -> true while we're waiting to answer them
+local pending = {} -- requester -> { since =, have = { [id] = rev } }, while we're waiting to answer them
+local manifests = {} -- sender -> { [id] = rev }, the "M" lines of a sync request being read
+local MARGIN = 600 -- profession/recipe catch-up starts a bit before the last sync, in case clocks or a message lagged
+local DIGEST_EVERY = 600
+local DIGEST_JITTER = 120
+local RESYNC_GAP = 300 -- we ask for a sync because of a fingerprint at most this often
+local lastSyncAsk = 0
+local lastSyncSeen = 0
+local resyncPending = false
 
-function D.RequestSync()
-	if orders() then
-		D.Send("S")
+-- Everything that syncs this way: orders, and the wishlist (Wishlist.lua).
+-- Ids never clash (wish ids start with "w:"). Each entry: get() -> the table
+-- by id, relay(item) sends one copy as bulk traffic.
+local synced = {
+	{ get = orders, relay = function(o)
+		send("R", o, true)
+	end },
+}
+function D.RegisterSynced(get, relay)
+	synced[#synced + 1] = { get = get, relay = relay }
+end
+
+local function eachSynced(fn)
+	for _, t in ipairs(synced) do
+		for id, item in pairs(t.get() or {}) do
+			fn(id, item, t)
+		end
 	end
 end
 
+local function findSynced(id)
+	for _, t in ipairs(synced) do
+		local all = t.get()
+		if all and all[id] then
+			return all[id], t
+		end
+	end
+end
+
+-- "count:hash" over every order's (and wish's) id and revision.
+function D.OrdersDigest()
+	local keys = {}
+	eachSynced(function(id, o)
+		keys[#keys + 1] = id .. "=" .. (o.rev or 0) .. (o.crafter or "")
+	end)
+	table.sort(keys)
+	local h = 5381
+	for _, k in ipairs(keys) do
+		for i = 1, #k do
+			h = (h * 33 + k:byte(i)) % 4294967291
+		end
+	end
+	return ("%d:%x"):format(#keys, h)
+end
+
+-- full: ask for everything, not just what changed.
+function D.RequestSync(full)
+	local data = D.Data()
+	if not data then
+		return
+	end
+	local since = 0
+	if not full and data.lastSync then
+		since = math.max(0, data.lastSync - MARGIN)
+	end
+	lastSyncAsk = D.Now()
+	local lines = {}
+	if not full then
+		eachSynced(function(id, o)
+			lines[#lines + 1] = D.Pack("M", id, o.rev or 0)
+		end)
+	end
+	lines[#lines + 1] = D.Pack("S", since, full and "full" or "list")
+	D.SendTogether(lines)
+end
+
+D.Handle("M", function(f, sender)
+	if f[2] and f[2] ~= "" then
+		manifests[sender] = manifests[sender] or {}
+		manifests[sender][f[2]] = tonumber(f[3]) or 0
+	end
+end)
+
 local function answer(requester)
-	if not pending[requester] then
+	local req = pending[requester]
+	if not req then
 		return
 	end
 	pending[requester] = nil
+	local since, have = req.since, req.have
 	D.Send("D", requester)
-	for _, o in pairs(orders() or {}) do
-		send("R", o)
+	eachSynced(function(id, o, t)
+		local theirs = have and have[id]
+		if not have or not theirs or theirs < (o.rev or 0) then
+			t.relay(o)
+		end
+	end)
+	if have then
+		for id, rev in pairs(have) do
+			local o = findSynced(id)
+			if not o or (o.rev or 0) < rev then
+				D.SendBulk("W", requester, id)
+			end
+		end
 	end
 	local data = D.Data()
 	for name in pairs(data and data.profs or {}) do
-		D.SendProfessions(name)
+		D.SendProfessions(name, since)
 	end
 	for name in pairs(data and data.recipes or {}) do
-		D.SendRecipes(name)
+		D.SendRecipes(name, since)
 	end
+	D.FlushBulk()
 end
 D._answerSync = answer
 
-D.Handle("S", function(_, sender)
+D.Handle("S", function(f, sender)
+	lastSyncSeen = D.Now()
+	local have = manifests[sender]
+	manifests[sender] = nil
 	if not orders() then
 		return
 	end
-	pending[sender] = true
+	local since = tonumber(f[2]) or 0
+	if f[3] ~= "list" then
+		have = nil -- an older client, or /pfg sync: send everything
+	elseif not have then
+		have = {} -- they have no orders at all
+	end
+	local old = pending[sender]
+	pending[sender] = { since = math.min(old and old.since or since, since), have = have }
 	local wait = 1 + math.random() * 4
 	if C_Timer then
 		C_Timer.After(wait, function()
@@ -310,8 +430,71 @@ D.Handle("S", function(_, sender)
 end)
 
 D.Handle("D", function(f)
-	pending[D.FullName(f[2]) or ""] = nil
+	local requester = D.FullName(f[2]) or ""
+	pending[requester] = nil
+	-- Someone is answering our sync: next time we only need what changed after now.
+	if requester == D.Me() then
+		local data = D.Data()
+		if data then
+			data.lastSync = D.Now()
+		end
+	end
 end)
+
+-- W requester id: the requester has a newer copy of this order than the one
+-- answering; if that's us, share ours with everyone.
+local pushed = {}
+D.Handle("W", function(f)
+	if D.FullName(f[2]) ~= D.Me() or not f[3] then
+		return
+	end
+	local o, t = findSynced(f[3])
+	if o and not pushed[f[3]] then
+		pushed[f[3]] = true
+		t.relay(o)
+		if C_Timer then
+			C_Timer.After(5, function()
+				pushed[f[3]] = nil
+			end)
+		end
+	end
+end)
+
+-- Fingerprints ----------------------------------------------------------------------
+
+function D.SendDigest()
+	if orders() then
+		D.SendBulk("HD", D.OrdersDigest())
+	end
+end
+
+D.Handle("HD", function(f)
+	if not orders() or not f[2] or f[2] == D.OrdersDigest() then
+		return
+	end
+	local now = D.Now()
+	if resyncPending or now - lastSyncAsk < RESYNC_GAP then
+		return
+	end
+	-- Wait a moment: if someone else asks for a sync first, that settles it.
+	resyncPending = true
+	local asked = lastSyncSeen
+	if C_Timer then
+		C_Timer.After(2 + math.random() * 8, function()
+			resyncPending = false
+			if lastSyncSeen == asked and f[2] ~= D.OrdersDigest() then
+				D.RequestSync()
+			end
+		end)
+	end
+end)
+
+local function digestLoop()
+	D.SendDigest()
+	if C_Timer then
+		C_Timer.After(DIGEST_EVERY + math.random() * DIGEST_JITTER, digestLoop)
+	end
+end
 
 function D.PruneOrders()
 	local all = orders()
@@ -334,10 +517,14 @@ D.On("GUILD", function(member)
 			D.PruneOrders()
 			D.RequestSync()
 		end)
+		if not D._digestLoop then
+			D._digestLoop = true
+			C_Timer.After(40 + math.random() * 20, digestLoop)
+		end
 	end
 end)
 
 D.Command("sync", function()
-	D.RequestSync()
+	D.RequestSync(true)
 	D.print("asked the guild for the latest orders and professions.")
-end, "/ds sync - fetch the latest orders and professions from the guild")
+end, "/pfg sync - fetch the latest orders and professions from the guild")

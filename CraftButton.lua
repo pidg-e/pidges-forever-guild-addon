@@ -1,4 +1,4 @@
--- Dreamscape: a "Guild Order" button on the profession window. It opens the guild
+-- Pidge's Forever Guild: a "Guild Order" button on the profession window. It opens the guild
 -- crafting orders with a new order already filled in for the selected
 -- recipe's item and profession.
 --
@@ -12,8 +12,8 @@ local D = ns.D
 
 -- Open the guild panel on Crafting Orders with a new order for this item.
 function D.StartOrderFor(id, name, code)
-	if not D.InDreamscape() then
-		D.print("crafting orders are only for members of <" .. D.GUILD_NAME .. ">.")
+	if not D.InGuild() then
+		D.print("crafting orders are only for guild members.")
 		return
 	end
 	if not id or id <= 0 then
@@ -28,7 +28,7 @@ function D.StartOrderFor(id, name, code)
 	local tries = 0
 	local function fill()
 		tries = tries + 1
-		local tab = DreamscapeOrdersTab
+		local tab = PFGOrdersTab
 		if tab and tab:IsShown() then
 			D.ShowOrders(true)
 			D.ShowOrderForm(true)
@@ -113,7 +113,7 @@ end
 local buttons = {}
 
 local function refresh(b)
-	b:SetShown(D.InDreamscape())
+	b:SetShown(D.InGuild())
 	local id = D.SelectedRecipeItem()
 	b:SetEnabled(id ~= nil)
 end
