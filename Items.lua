@@ -158,8 +158,10 @@ function D.ItemName(id)
 end
 
 -- Every item link in a piece of text.
+-- Chat text can arrive as a secret value (in instances or combat), which
+-- addons can't read, so skip it.
 function D.LearnLinks(text)
-	if type(text) ~= "string" then
+	if type(text) ~= "string" or (issecretvalue and issecretvalue(text)) then
 		return
 	end
 	for id, name in text:gmatch("|Hitem:(%d+)[^|]*|h%[(.-)%]|h") do
